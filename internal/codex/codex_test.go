@@ -208,8 +208,14 @@ func TestHookMissingFileAndAlreadyHooked(t *testing.T) {
 	if err != nil || prev != "" {
 		t.Fatalf("%q %v", prev, err)
 	}
-	if _, err := Hook("/usr/bin/devlets"); err == nil {
-		t.Fatal("second hook should refuse")
+	// a notify that is already ours (e.g. config.json was lost) is adopted:
+	// hooked, no previous, re-pointed at this binary, never doubled
+	prev, err = Hook("/new/place/devlets")
+	if err != nil || prev != "" {
+		t.Fatalf("adopt: %q %v", prev, err)
+	}
+	if b, _ := os.ReadFile(p); strings.Count(string(b), "codex-notify") != 1 || !strings.Contains(string(b), "place") {
+		t.Fatalf("adopted file: %s", b)
 	}
 	if err := Unhook(""); err != nil {
 		t.Fatal(err)

@@ -25,6 +25,9 @@ import (
 // it to the real detacher; tests set it to a recorder. Nil means do nothing.
 var StartPush func(args ...string) error
 
+// chainedEnv is set in the chained command's environment (see RunStatusLine).
+const chainedEnv = "DEVLETS_CHAINED"
+
 // chainTimeout bounds the user's previous status-line command.
 var chainTimeout = time.Second
 
@@ -66,7 +69,9 @@ func RunStatusLine(stdin io.Reader, stdout io.Writer, cfg *store.Config, now tim
 	if cfg == nil {
 		return nil
 	}
-	if cmd := previousCommand(cfg); cmd != "" {
+	// A devlets started by another devlets' chain never chains again, so a
+	// status line that somehow points back at us cannot loop.
+	if cmd := previousCommand(cfg); cmd != "" && os.Getenv(chainedEnv) == "" {
 		if out := runChained(cmd, input); len(out) > 0 {
 			_, _ = stdout.Write(out)
 		}
@@ -170,6 +175,7 @@ func runChained(command string, input []byte) []byte {
 	}
 	cmd := exec.CommandContext(ctx, chainShell(), "-c", command)
 	cmd.Stdin = bytes.NewReader(input)
+	cmd.Env = append(os.Environ(), chainedEnv+"=1")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.WaitDelay = 100 * time.Millisecond // don't wait on grandchildren holding the pipe

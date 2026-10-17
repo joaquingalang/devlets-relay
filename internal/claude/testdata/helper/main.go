@@ -15,6 +15,10 @@ func main() {
 		fmt.Print("late")
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "env" {
+		fmt.Printf("CHAINED[%s]", os.Getenv("DEVLETS_CHAINED"))
+		return
+	}
 	raw, _ := io.ReadAll(os.Stdin)
 	var in struct {
 		Model struct {

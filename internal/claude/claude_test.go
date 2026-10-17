@@ -257,3 +257,58 @@ func TestHookKeepsPadding(t *testing.T) {
 		t.Fatalf("%+v", s)
 	}
 }
+
+func TestHookAdoptsOurOwnCommand(t *testing.T) {
+	for name, cmd := range map[string]string{
+		"plain":        "/old/place/devlets claude-statusline",
+		"quoted exe":   `"C:/Program Files/Devlets/devlets.exe" claude-statusline`,
+		"escaped path": `"/home/a b/\$x/devlets" claude-statusline`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := tempSettings(t)
+			raw, _ := json.Marshal(map[string]any{"statusLine": map[string]any{"type": "command", "command": cmd}, "theme": "dark"})
+			os.WriteFile(p, raw, 0o600)
+			prev, err := Hook("/usr/local/bin/devlets")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prev != nil {
+				t.Fatalf("our own command saved as previous: %s", prev)
+			}
+			got, _ := os.ReadFile(p)
+			if !strings.Contains(string(got), "/usr/local/bin/devlets claude-statusline") || strings.Contains(string(got), "old/place") {
+				t.Fatalf("not re-pointed at this binary: %s", got)
+			}
+		})
+	}
+}
+
+func TestHookDoesNotAdoptOtherCommands(t *testing.T) {
+	p := tempSettings(t)
+	os.WriteFile(p, []byte(`{"statusLine":{"type":"command","command":"node devlets-like.js claude-statusline-ish"}}`), 0o600)
+	prev, err := Hook("/usr/local/bin/devlets")
+	if err != nil || prev == nil {
+		t.Fatalf("prev=%s err=%v", prev, err)
+	}
+}
+
+func TestChainedCommandSeesMarker(t *testing.T) {
+	e := setup(t, prevCmd(" env"))
+	var out bytes.Buffer
+	_ = RunStatusLine(bytes.NewReader(golden(t, "claude-statusline-with-rate-limits.json")), &out, e.cfg, now)
+	if out.String() != "CHAINED[1]" {
+		t.Fatalf("got %q", out.String())
+	}
+}
+
+func TestChainedDevletsDoesNotChainAgain(t *testing.T) {
+	e := setup(t, prevCmd(""))
+	t.Setenv("DEVLETS_CHAINED", "1")
+	var out bytes.Buffer
+	if err := RunStatusLine(bytes.NewReader(golden(t, "claude-statusline-with-rate-limits.json")), &out, e.cfg, now); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("a chained devlets chained again: %q", out.String())
+	}
+}

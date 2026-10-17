@@ -187,7 +187,10 @@ func tomlQuote(s string) string {
 
 // Hook points Codex's top-level `notify` at `devlets codex-notify` and returns
 // the previous statement verbatim, line endings included ("" when there was
-// none). Only that statement changes; every other byte of the file stays.
+// none). Only that statement changes; every other byte of the file stays. A
+// notify that is already ours (any path, e.g. after config.json was lost) is
+// adopted: it is re-pointed at this binary and previous is "", so unlink
+// removes it and Codex never chains devlets to itself.
 func Hook(devletsPath string) (previous string, err error) {
 	abs, err := filepath.Abs(devletsPath)
 	if err != nil {
@@ -212,10 +215,9 @@ func Hook(devletsPath string) (previous string, err error) {
 	var out string
 	if start >= 0 {
 		span := strings.Join(lines[start:end], "")
-		if isOurs(span) {
-			return "", errors.New("Codex notify is already hooked")
+		if !isOurs(span) {
+			previous = span
 		}
-		previous = span
 		out = strings.Join(lines[:start], "") + ours + lineEnding(span) + strings.Join(lines[end:], "")
 	} else if header == len(lines) && len(lines) > 0 && lineEnding(lines[len(lines)-1]) == "" {
 		// the file does not end in a newline: add ours after one, with none after it

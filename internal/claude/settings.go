@@ -62,10 +62,30 @@ func hookCommand(devletsPath string) string {
 	return p + " claude-statusline"
 }
 
+// isOurCommand reports whether a status-line command is `<path to devlets>
+// claude-statusline` as hookCommand writes it, whatever the path.
+func isOurCommand(command string) bool {
+	c := strings.TrimSpace(command)
+	const sub = " claude-statusline"
+	if !strings.HasSuffix(c, sub) {
+		return false
+	}
+	prog := strings.TrimSpace(strings.TrimSuffix(c, sub))
+	if len(prog) >= 2 && prog[0] == '"' && prog[len(prog)-1] == '"' {
+		prog = strings.NewReplacer(`\\`, `\`, `\"`, `"`, `\$`, "$", "\\`", "`").Replace(prog[1 : len(prog)-1])
+	}
+	base := prog[strings.LastIndexAny(prog, `/\`)+1:]
+	base = strings.TrimSuffix(strings.ToLower(base), ".exe")
+	return base == "devlets"
+}
+
 // Hook points Claude Code's statusLine at `devlets claude-statusline` and
 // returns the previous statusLine value as raw JSON (nil when there was none).
 // Only the statusLine value is edited; the rest of the file keeps its bytes,
-// and other fields of a previous statusLine object (padding) are kept.
+// and other fields of a previous statusLine object (padding) are kept. A
+// statusLine that is already ours (any path, e.g. after config.json was lost)
+// is adopted: it is re-pointed at this binary and previous is nil, so the
+// status line never chains to itself.
 func Hook(devletsPath string) (previous json.RawMessage, err error) {
 	abs, err := filepath.Abs(devletsPath)
 	if err != nil {
@@ -82,7 +102,7 @@ func Hook(devletsPath string) (previous json.RawMessage, err error) {
 	cmd := hookCommand(abs)
 	cur := gjson.GetBytes(raw, statusLineKey)
 	var out []byte
-	if cur.Exists() {
+	if cur.Exists() && !(cur.IsObject() && isOurCommand(cur.Get("command").String())) {
 		previous = json.RawMessage(cur.Raw)
 	}
 	if cur.IsObject() {
