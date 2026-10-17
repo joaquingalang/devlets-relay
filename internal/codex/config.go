@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/joaquingalang/devlets-relay/internal/safefile"
 )
 
 // configPath is $CODEX_HOME/config.toml, else ~/.codex/config.toml.
@@ -34,34 +36,9 @@ func readConfig(path string) (string, error) {
 	return string(b), nil
 }
 
-// writeConfig writes atomically: a temp file in the same directory, then a
-// rename. An existing file keeps its mode.
+// writeConfig writes atomically through a symlink, keeping the file's mode.
 func writeConfig(path, text string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	mode := os.FileMode(0o644)
-	if fi, err := os.Stat(path); err == nil {
-		mode = fi.Mode().Perm()
-	}
-	tmp, err := os.CreateTemp(dir, "config.toml.*.tmp")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	_, werr := tmp.WriteString(text)
-	cerr := tmp.Close()
-	if werr != nil || cerr != nil {
-		os.Remove(name)
-		return errors.New("write Codex config failed")
-	}
-	_ = os.Chmod(name, mode)
-	if err := os.Rename(name, path); err != nil {
-		os.Remove(name)
-		return err
-	}
-	return nil
+	return safefile.Write(path, []byte(text), 0o644)
 }
 
 // ---- a small TOML line scanner: just enough to know where statements start ----

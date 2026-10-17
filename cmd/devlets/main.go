@@ -203,10 +203,16 @@ func runPush(args []string, stderr io.Writer) int {
 	}
 	push.Log = stderr
 	push.UnhookClaude = func(previous *string) error {
-		if previous == nil {
-			return claude.Unhook(nil)
+		var prev json.RawMessage
+		if previous != nil {
+			prev = json.RawMessage(*previous)
 		}
-		return claude.Unhook(json.RawMessage(*previous))
+		err := claude.Unhook(prev)
+		if errors.Is(err, claude.ErrUserChanged) {
+			fmt.Fprintln(stderr, "Claude Code status line was changed by the user; left as it is")
+			return nil
+		}
+		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
 	defer cancel()

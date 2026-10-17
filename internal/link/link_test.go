@@ -655,3 +655,28 @@ func TestUnlinkKeepsConfigWhenCodexRestoreFails(t *testing.T) {
 		t.Errorf("config must be kept with only codex still hooked: %+v %v", cfg, err)
 	}
 }
+
+func TestUnlinkLeavesChangedStatusLine(t *testing.T) {
+	e := setup(t)
+	linkOnce(t, e)
+	theirs := `{"statusLine":{"type":"command","command":"their-new-line"},"theme":"dark"}`
+	if err := os.WriteFile(e.claude, []byte(theirs), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := Unlink(context.Background(), &out, Options{}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if b, _ := os.ReadFile(e.claude); string(b) != theirs {
+		t.Errorf("user's status line overwritten: %s", b)
+	}
+	if !strings.Contains(out.String(), "Your Claude Code status line was changed after linking, so Devlets left it as it is.") {
+		t.Errorf("must say so: %s", out.String())
+	}
+	if b, _ := os.ReadFile(e.codex); string(b) != codexBefore {
+		t.Errorf("codex not restored: %s", b)
+	}
+	if _, err := store.LoadConfig(); err != store.ErrNotLinked {
+		t.Errorf("config should be gone: %v", err)
+	}
+}

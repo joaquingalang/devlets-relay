@@ -10,9 +10,15 @@ import (
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+
+	"github.com/joaquingalang/devlets-relay/internal/safefile"
 )
 
 const statusLineKey = "statusLine"
+
+// ErrUserChanged means the statusLine is no longer ours: the user changed it
+// after linking, so Unhook left it as it is. Callers treat it as restored.
+var ErrUserChanged = errors.New("Claude Code's status line was changed after linking; left as it is")
 
 // settingsPath is $CLAUDE_CONFIG_DIR/settings.json, else ~/.claude/settings.json.
 func settingsPath() (string, error) {
@@ -44,11 +50,9 @@ func readSettings(path string) ([]byte, error) {
 	return raw, nil
 }
 
+// writeSettings writes atomically through a symlink, keeping the file's mode.
 func writeSettings(path string, raw []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, raw, 0o644)
+	return safefile.Write(path, raw, 0o644)
 }
 
 // hookCommand is the status-line command: the absolute binary path (quoted
@@ -123,7 +127,9 @@ func Hook(devletsPath string) (previous json.RawMessage, err error) {
 }
 
 // Unhook writes the saved statusLine value back exactly as it was, or removes
-// the key when there was none (previous == nil).
+// the key when there was none (previous == nil). It only does so while the
+// statusLine is still ours; one the user changed since is left alone and
+// ErrUserChanged is returned.
 func Unhook(previous json.RawMessage) error {
 	path, err := settingsPath()
 	if err != nil {
@@ -132,6 +138,12 @@ func Unhook(previous json.RawMessage) error {
 	raw, err := readSettings(path)
 	if err != nil {
 		return err
+	}
+	if cur := gjson.GetBytes(raw, statusLineKey); !(cur.IsObject() && isOurCommand(cur.Get("command").String())) {
+		if !cur.Exists() && previous == nil {
+			return nil // already as it was
+		}
+		return ErrUserChanged
 	}
 	var out []byte
 	if previous == nil {

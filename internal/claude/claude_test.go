@@ -3,10 +3,12 @@ package claude
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -310,5 +312,75 @@ func TestChainedDevletsDoesNotChainAgain(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Fatalf("a chained devlets chained again: %q", out.String())
+	}
+}
+
+func TestUnhookLeavesUserEdit(t *testing.T) {
+	prev := json.RawMessage(`{"type":"command","command":"old"}`)
+	for name, c := range map[string]string{
+		"changed": "{\n  \"statusLine\": {\"type\": \"command\", \"command\": \"theirs\"}\n}\n",
+		"removed": "{\n  \"theme\": \"dark\"\n}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := tempSettings(t)
+			os.WriteFile(p, []byte(c), 0o600)
+			if err := Unhook(prev); !errors.Is(err, ErrUserChanged) {
+				t.Fatalf("want ErrUserChanged, got %v", err)
+			}
+			if b, _ := os.ReadFile(p); string(b) != c {
+				t.Fatalf("user's settings changed: %q", b)
+			}
+		})
+	}
+	// nothing there and nothing to put back: already as it was
+	p := tempSettings(t)
+	os.WriteFile(p, []byte(`{"theme":"dark"}`), 0o600)
+	if err := Unhook(nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHookUnhookThroughSymlink(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	real := filepath.Join(t.TempDir(), "dotfiles-settings.json")
+	orig := `{"statusLine":{"type":"command","command":"old"}}`
+	os.WriteFile(real, []byte(orig), 0o600)
+	link := filepath.Join(dir, "settings.json")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	prev, err := Hook("/opt/devlets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("settings.json is no longer a symlink")
+	}
+	if b, _ := os.ReadFile(real); !strings.Contains(string(b), "claude-statusline") {
+		t.Fatalf("target not hooked: %s", b)
+	}
+	if err := Unhook(prev); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(real); string(b) != orig {
+		t.Fatalf("not restored: %s", b)
+	}
+	if fi, _ := os.Stat(real); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", fi.Mode().Perm())
+	}
+}
+
+func TestHookKeepsMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file modes")
+	}
+	p := tempSettings(t)
+	os.WriteFile(p, []byte(`{}`), 0o600)
+	if _, err := Hook("/opt/devlets"); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", fi.Mode().Perm())
 	}
 }

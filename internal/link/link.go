@@ -46,6 +46,7 @@ const (
 	msgNothingToLink = "Neither Claude Code nor Codex is set up to send usage. Nothing to link."
 	msgShowAgain     = "Run devlets link again to show the code."
 	msgRemoved       = "This link was removed from the phone. Run devlets link to set it up again."
+	msgClaudeLeft    = "Your Claude Code status line was changed after linking, so Devlets left it as it is."
 )
 
 // AfterStatus runs at the end of `devlets status`. main hooks the weekly
@@ -426,7 +427,12 @@ func restoreTools(out io.Writer, cfg *store.Config) error {
 		if cfg.Claude.Previous != nil {
 			prev = json.RawMessage(*cfg.Claude.Previous)
 		}
-		if err := claude.Unhook(prev); err != nil {
+		err := claude.Unhook(prev)
+		if errors.Is(err, claude.ErrUserChanged) {
+			fmt.Fprintln(out, msgClaudeLeft)
+			err = nil
+		}
+		if err != nil {
 			failed = true
 			fmt.Fprintf(out, "Could not restore Claude Code: %v\nFix %s by hand, then run devlets unlink again.\n", err, claudeSettingsPath())
 		} else {

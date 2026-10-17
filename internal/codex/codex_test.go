@@ -411,3 +411,33 @@ func TestRunNotifyUnreadableStateWritesNothing(t *testing.T) {
 		t.Fatalf("%v %d", err, pushes)
 	}
 }
+
+func TestHookUnhookThroughSymlinkKeepsMode(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CODEX_HOME", dir)
+	real := filepath.Join(t.TempDir(), "config.toml")
+	orig := "model = 1\nnotify = [\"a\"]\n"
+	if err := os.WriteFile(real, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "config.toml")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	prev, err := Hook("/opt/devlets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("config.toml is no longer a symlink")
+	}
+	if err := Unhook(prev); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(real); string(b) != orig {
+		t.Fatalf("not restored: %q", b)
+	}
+	if fi, _ := os.Stat(real); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", fi.Mode().Perm())
+	}
+}
