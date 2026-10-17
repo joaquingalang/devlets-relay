@@ -55,6 +55,8 @@ type State struct {
 	CodexAttemptAt time.Time `json:"codexAttemptAt"`
 	// PushFailures counts failed pushes in a row, for the retry backoff.
 	PushFailures int `json:"pushFailures,omitempty"`
+	// UpdateCheckedAt is when status last asked GitHub for a newer version.
+	UpdateCheckedAt time.Time `json:"updateCheckedAt"`
 }
 
 const (
@@ -177,6 +179,7 @@ func LoadState() (*State, error) {
 	s.LastPush.At = s.LastPush.At.UTC()
 	s.NextAllowed = s.NextAllowed.UTC()
 	s.CodexAttemptAt = s.CodexAttemptAt.UTC()
+	s.UpdateCheckedAt = s.UpdateCheckedAt.UTC()
 	return &s, nil
 }
 
@@ -186,6 +189,7 @@ func SaveState(s *State) error {
 	c.LastPush.At = c.LastPush.At.UTC()
 	c.NextAllowed = c.NextAllowed.UTC()
 	c.CodexAttemptAt = c.CodexAttemptAt.UTC()
+	c.UpdateCheckedAt = c.UpdateCheckedAt.UTC()
 	return write(stateFile, &c)
 }
 

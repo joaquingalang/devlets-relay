@@ -1,0 +1,37 @@
+version: 2
+
+project_name: devlets
+
+builds:
+  - id: devlets
+    main: ./cmd/devlets
+    binary: devlets
+    env:
+      - CGO_ENABLED=0
+    goos: [windows, linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+# One universal macOS binary: devlets_<version>_darwin_all.tar.gz
+universal_binaries:
+  - ids: [devlets]
+    replace: true
+
+archives:
+  - id: devlets
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # Only the binary: the default LICENSE/README are dropped (no file matches none*).
+    files:
+      - none*
+    name_template: "devlets_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  disable: true

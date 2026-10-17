@@ -48,7 +48,7 @@ const (
 	msgRemoved       = "This link was removed from the phone. Run devlets link to set it up again."
 )
 
-// AfterStatus runs at the end of `devlets status`. Task 10 hooks the weekly
+// AfterStatus runs at the end of `devlets status`. main hooks the weekly
 // "newer version" line here.
 var AfterStatus func(out io.Writer)
 

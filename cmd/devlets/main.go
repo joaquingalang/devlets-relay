@@ -17,6 +17,7 @@ import (
 	"github.com/joaquingalang/devlets-relay/internal/mailbox"
 	"github.com/joaquingalang/devlets-relay/internal/push"
 	"github.com/joaquingalang/devlets-relay/internal/store"
+	"github.com/joaquingalang/devlets-relay/internal/update"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -28,6 +29,7 @@ Commands:
   link          Link this computer to your phone
   status        Show what is linked and the last reading
   unlink        Remove the link and the hooks
+  update        Install the latest version
   push          Read usage and send it now
   claude-statusline   (used by Claude Code)
   codex-notify        (used by Codex)
@@ -37,6 +39,8 @@ Flags:
 `
 
 func main() {
+	update.Current = version
+	update.CleanupOld() // a Windows update leaves the old binary as .old
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
@@ -74,8 +78,12 @@ func runWith(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runPush(args[1:], stderr)
 	case "link":
 		return runLink(args[1:], stdin, stdout, stderr)
+	case "update":
+		return runUpdate(stdout, stderr)
 	case "status":
 		link.Version = version
+		update.Current = version
+		link.AfterStatus = func(out io.Writer) { update.Notice(out, time.Now()) }
 		if err := link.Status(stdout, time.Now()); err != nil {
 			fmt.Fprintf(stderr, "devlets status: %v\n", err)
 			return 1
@@ -96,7 +104,29 @@ func runWith(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 }
 
-// runLink is `devlets link [--yes] [--no-claude] [--no-codex]`.
+// runUpdate is `devlets update`.
+func runUpdate(stdout, stderr io.Writer) int {
+	update.Current = version
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	latest, newer, err := update.Check(ctx)
+	if err != nil {
+		fmt.Fprintf(stderr, "devlets update: %v\n", err)
+		return 1
+	}
+	if !newer {
+		fmt.Fprintf(stdout, "devlets %s is up to date.\n", version)
+		return 0
+	}
+	if err := update.Apply(ctx); err != nil {
+		fmt.Fprintf(stderr, "devlets update: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Updated devlets %s to %s.\n", version, latest)
+	return 0
+}
+
+// runLink is`devlets link [--yes] [--no-claude] [--no-codex]`.
 func runLink(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	opts := link.Options{API: os.Getenv("DEVLETS_API")}
 	for _, a := range args {

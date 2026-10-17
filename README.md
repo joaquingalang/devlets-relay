@@ -35,13 +35,27 @@ It is **encrypted end to end**: the key is created on your computer and shared w
 
 ## Install
 
-Install instructions: https://getdevlets.com/relay
+macOS and Linux:
+
+```sh
+curl -fsSL https://getdevlets.com/link.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://getdevlets.com/link.ps1 | iex
+```
+
+More: https://getdevlets.com/relay
 
 ## Commands
 
 - `devlets link` links this computer to your phone
 - `devlets status` shows what is linked and the last reading
 - `devlets unlink` removes the link and the hooks
+- `devlets push` reads usage and sends it now
+- `devlets update` installs the latest version (`status` mentions a newer one at most once a week)
 - `devlets --version` prints the version
 
 ## Licence
