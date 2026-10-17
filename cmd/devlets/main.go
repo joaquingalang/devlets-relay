@@ -147,10 +147,17 @@ func runLink(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}
 	link.Version = version
+	in, closeIn := promptInput(stdin)
+	defer closeIn()
+	opts.Terminal = in != nil
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if err := link.Run(ctx, stdin, stdout, opts); err != nil {
+	if err := link.Run(ctx, in, stdout, opts); err != nil {
 		if errors.Is(err, link.ErrReported) {
+			return 1
+		}
+		if errors.Is(err, link.ErrNoTerminal) {
+			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		fmt.Fprintf(stderr, "devlets link: %v\n", err)

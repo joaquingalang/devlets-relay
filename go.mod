@@ -7,11 +7,11 @@ require (
 	github.com/tidwall/gjson v1.20.0
 	github.com/tidwall/sjson v1.2.5
 	golang.org/x/sys v0.49.0
+	golang.org/x/term v0.13.0
 	rsc.io/qr v0.2.0
 )
 
 require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
-	golang.org/x/term v0.13.0 // indirect
 )

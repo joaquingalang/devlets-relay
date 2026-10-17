@@ -30,9 +30,12 @@ import (
 // Options are the flags of `devlets link`, plus test seams.
 type Options struct {
 	Yes, NoClaude, NoCodex bool
-	API                    string        // relay API base; empty means production
-	HelloTimeout           time.Duration // how long to wait for the phone; 0 means 10 minutes
-	Detect                 func() (claude, codex bool)
+	// Terminal says the answers come from a real terminal. Only then does an
+	// empty answer mean yes.
+	Terminal     bool
+	API          string        // relay API base; empty means production
+	HelloTimeout time.Duration // how long to wait for the phone; 0 means 10 minutes
+	Detect       func() (claude, codex bool)
 }
 
 // Version is the CLI version, for the User-Agent. main sets it.
@@ -41,6 +44,9 @@ var Version = "dev"
 // ErrReported means the command already told the user what happened; main
 // exits 1 without printing anything more.
 var ErrReported = errors.New("already reported")
+
+// ErrNoTerminal means there is nobody to ask: no terminal and no --yes.
+var ErrNoTerminal = errors.New("devlets link needs a terminal to ask before changing your settings. Run it in a terminal, or pass --yes.")
 
 const (
 	msgNothingToLink = "Neither Claude Code nor Codex is set up to send usage. Nothing to link."
@@ -122,14 +128,15 @@ func prompt(r *bufio.Reader, out io.Writer, question string) string {
 	return strings.TrimSpace(line)
 }
 
-// yesNo asks a [Y/n] question: y, Y and an empty answer are yes.
-func yesNo(r *bufio.Reader, out io.Writer, yes bool, question string) bool {
-	if yes {
+// yesNo asks a [Y/n] question: y and yes are yes, and so is an empty answer
+// typed at a real terminal (not one from a closed or redirected input).
+func yesNo(r *bufio.Reader, out io.Writer, opts Options, question string) bool {
+	if opts.Yes {
 		fmt.Fprintln(out, question+" Y")
 		return true
 	}
 	a := strings.ToLower(prompt(r, out, question))
-	return a == "" || a == "y" || a == "yes"
+	return (a == "" && opts.Terminal) || a == "y" || a == "yes"
 }
 
 // apiFor is where an existing box lives: the base saved at link time. Only a
@@ -141,8 +148,15 @@ func apiFor(opts Options, cfg *store.Config) string {
 	return opts.api()
 }
 
-// Run is `devlets link`.
+// Run is `devlets link`. in is where answers come from; nil means there is no
+// terminal, and then only --yes may go ahead.
 func Run(ctx context.Context, in io.Reader, out io.Writer, opts Options) error {
+	if in == nil {
+		if !opts.Yes {
+			return ErrNoTerminal
+		}
+		in = strings.NewReader("")
+	}
 	r := bufio.NewReader(in)
 	cfg, err := store.LoadConfig()
 	switch {
@@ -224,10 +238,10 @@ func fresh(ctx context.Context, r *bufio.Reader, out io.Writer, opts Options) er
 	hasClaude, hasCodex := detect()
 	wantClaude, wantCodex := false, false
 	if hasClaude && !opts.NoClaude {
-		wantClaude = yesNo(r, out, opts.Yes, "Send Claude usage? This adds Devlets to your Claude Code status line. Your current status line keeps working. [Y/n]")
+		wantClaude = yesNo(r, out, opts, "Send Claude usage? This adds Devlets to your Claude Code status line. Your current status line keeps working. [Y/n]")
 	}
 	if hasCodex && !opts.NoCodex {
-		wantCodex = yesNo(r, out, opts.Yes, "Send Codex usage? This runs Devlets after each Codex reply. [Y/n]")
+		wantCodex = yesNo(r, out, opts, "Send Codex usage? This runs Devlets after each Codex reply. [Y/n]")
 	}
 	if !wantClaude && !wantCodex {
 		fmt.Fprintln(out, msgNothingToLink)

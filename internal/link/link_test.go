@@ -61,7 +61,7 @@ func setup(t *testing.T) *env {
 }
 
 func (e *env) opts(yes bool) Options {
-	return Options{Yes: yes, API: e.srv.URL, HelloTimeout: 5 * time.Second,
+	return Options{Yes: yes, Terminal: true, API: e.srv.URL, HelloTimeout: 5 * time.Second,
 		Detect: func() (bool, bool) { return true, true }}
 }
 
@@ -690,5 +690,55 @@ func TestUnlinkUsesSavedAPIBase(t *testing.T) {
 	}
 	if !e.deleted(cfg.BoxID) {
 		t.Errorf("box not deleted at the saved API base")
+	}
+}
+
+func TestLinkNeedsATerminal(t *testing.T) {
+	e := setup(t)
+	o := e.opts(false)
+	o.Terminal = false
+	var out bytes.Buffer
+	if err := Run(context.Background(), nil, &out, o); !errors.Is(err, ErrNoTerminal) {
+		t.Fatalf("err = %v", err)
+	}
+	if ErrNoTerminal.Error() != "devlets link needs a terminal to ask before changing your settings. Run it in a terminal, or pass --yes." {
+		t.Errorf("message: %q", ErrNoTerminal.Error())
+	}
+	if len(e.srv.Requests()) != 0 {
+		t.Errorf("contacted the server without consent")
+	}
+	if _, err := store.LoadConfig(); err != store.ErrNotLinked {
+		t.Errorf("config written")
+	}
+	if b, _ := os.ReadFile(e.claude); string(b) != claudeBefore {
+		t.Errorf("claude settings touched")
+	}
+}
+
+func TestLinkYesWithoutTerminal(t *testing.T) {
+	e := setup(t)
+	e.phone("P")
+	o := e.opts(true)
+	o.Terminal = false
+	var out bytes.Buffer
+	if err := Run(context.Background(), nil, &out, o); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if cfg, _ := store.LoadConfig(); cfg == nil || !cfg.Claude.Hooked || !cfg.Codex.Hooked {
+		t.Errorf("--yes must link both: %+v", cfg)
+	}
+}
+
+func TestEmptyAnswerIsYesOnlyFromATerminal(t *testing.T) {
+	e := setup(t)
+	o := e.opts(false)
+	o.Terminal = false
+	var out bytes.Buffer
+	err := Run(context.Background(), strings.NewReader("\n\n"), &out, o)
+	if !errors.Is(err, ErrReported) || !strings.Contains(out.String(), msgNothingToLink) {
+		t.Fatalf("empty answers from a non-terminal must be no: %v\n%s", err, out.String())
+	}
+	if posts(e) != 0 {
+		t.Errorf("box created")
 	}
 }
