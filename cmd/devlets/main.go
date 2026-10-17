@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
+
+	"github.com/joaquingalang/devlets-relay/internal/claude"
+	"github.com/joaquingalang/devlets-relay/internal/store"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -29,6 +33,10 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	return runWith(args, os.Stdin, stdout, stderr)
+}
+
+func runWith(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -40,7 +48,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "-h", "--help", "help":
 		fmt.Fprint(stdout, usage)
 		return 0
-	case "link", "status", "unlink", "push", "claude-statusline", "codex-notify":
+	case "claude-statusline":
+		// Never fails: the status line must keep working whatever happens here.
+		cfg, _ := store.LoadConfig()
+		_ = claude.RunStatusLine(stdin, stdout, cfg, time.Now())
+		return 0
+	case "link", "status", "unlink", "push", "codex-notify":
 		fmt.Fprintf(stderr, "devlets %s: not implemented yet\n", args[0])
 		return 1
 	default:
