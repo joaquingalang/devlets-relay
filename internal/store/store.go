@@ -50,6 +50,9 @@ type State struct {
 	Reading     contract.Reading `json:"reading"`
 	LastPush    Pushed           `json:"lastPush"`
 	NextAllowed time.Time        `json:"nextAllowed"`
+	// CodexAttemptAt is when a Codex rate-limit read was last started, so a
+	// failing read is not retried on every turn.
+	CodexAttemptAt time.Time `json:"codexAttemptAt"`
 }
 
 const (
@@ -171,6 +174,7 @@ func LoadState() (*State, error) {
 	}
 	s.LastPush.At = s.LastPush.At.UTC()
 	s.NextAllowed = s.NextAllowed.UTC()
+	s.CodexAttemptAt = s.CodexAttemptAt.UTC()
 	return &s, nil
 }
 
@@ -179,6 +183,7 @@ func SaveState(s *State) error {
 	c := *s
 	c.LastPush.At = c.LastPush.At.UTC()
 	c.NextAllowed = c.NextAllowed.UTC()
+	c.CodexAttemptAt = c.CodexAttemptAt.UTC()
 	return write(stateFile, &c)
 }
 

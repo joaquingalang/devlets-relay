@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/joaquingalang/devlets-relay/internal/claude"
+	"github.com/joaquingalang/devlets-relay/internal/codex"
 	"github.com/joaquingalang/devlets-relay/internal/store"
 )
 
@@ -53,11 +54,28 @@ func runWith(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		cfg, _ := store.LoadConfig()
 		_ = claude.RunStatusLine(stdin, stdout, cfg, time.Now())
 		return 0
-	case "link", "status", "unlink", "push", "codex-notify":
+	case "codex-notify":
+		// Never fails and prints nothing: Codex runs this after every turn.
+		cfg, _ := store.LoadConfig()
+		codex.StartChain = codex.StartDetached
+		codex.StartPush = startPush
+		codex.ClientVersion = version
+		_ = codex.RunNotify(args[1:], cfg, time.Now())
+		return 0
+	case "link", "status", "unlink", "push":
 		fmt.Fprintf(stderr, "devlets %s: not implemented yet\n", args[0])
 		return 1
 	default:
 		fmt.Fprintf(stderr, "devlets: unknown command %q\n\n%s", args[0], usage)
 		return 2
 	}
+}
+
+// startPush runs `devlets <args>` detached, using this same binary.
+func startPush(args ...string) error {
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	return codex.StartDetached(append([]string{self}, args...))
 }
