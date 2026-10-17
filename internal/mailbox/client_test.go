@@ -115,3 +115,16 @@ func TestUnexpectedStatusMessage(t *testing.T) {
 		t.Fatalf("want generic error, got %v", err)
 	}
 }
+
+func TestOnlyTheRelay404IsGone(t *testing.T) {
+	s := mailboxtest.New()
+	defer s.Close()
+	c := newClient(s)
+	id, wt, _ := c.Create(context.Background(), "hash")
+	s.ForceStatus(404) // a 404 with another body, e.g. a proxy or a wrong base
+	err := c.Put(context.Background(), id, wt, crypto.Envelope{V: 1})
+	var se *mailbox.StatusError
+	if errors.Is(err, mailbox.ErrGone) || !errors.As(err, &se) || se.Status != 404 {
+		t.Fatalf("want StatusError 404, got %v", err)
+	}
+}

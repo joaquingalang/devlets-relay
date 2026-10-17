@@ -26,6 +26,11 @@ var Log io.Writer = io.Discard
 // sets this variable instead of push importing claude.
 var UnhookClaude func(previous *string) error
 
+// refreshCodex reads Codex's rate limits into st; tests replace it.
+var refreshCodex = func(ctx context.Context, st *store.State) error {
+	return codex.Refresh(ctx, "codex", st)
+}
+
 const (
 	minBackoff = 60 * time.Second
 	maxBackoff = 15 * time.Minute
@@ -77,7 +82,7 @@ func Run(ctx context.Context, cfg *store.Config, st *store.State, client *mailbo
 
 	var codexTool *contract.Tool
 	if readCodex {
-		if err := codex.Refresh(ctx, "codex", st); err != nil {
+		if err := refreshCodex(ctx, st); err != nil {
 			logf("codex read failed")
 		} else {
 			t := st.Reading.Tools["codex"]
@@ -109,6 +114,11 @@ func Run(ctx context.Context, cfg *store.Config, st *store.State, client *mailbo
 		return nil
 	}
 	reading := contract.Reading{V: 1, Computer: cfg.Computer, SentAt: now, Hooked: hookedList(cfg), Tools: cur.Reading.Tools}
+	// The status line starts a push only when one is due; a Codex read starts
+	// one on a timer, so the due rule (FR10) is applied here.
+	if readCodex && !Due(cur.LastPush, reading, now, cur.NextAllowed) {
+		return nil
+	}
 
 	key, err := crypto.UnB64(cfg.Key)
 	if err != nil {
@@ -174,7 +184,14 @@ func update(canSave bool, mut func(*store.State)) {
 // unlink handles a 404: restore both tools' settings, then delete config.json
 // and state.json. When an unhook fails the config is kept (it holds the saved
 // previous values), the failure is logged and the next try is backed off.
-func unlink(cfg *store.Config, now time.Time, canSave bool) {
+// It acts only while config.json still holds the box this push sent to: a
+// `devlets link` that replaced the link meanwhile must not be undone.
+func unlink(started *store.Config, now time.Time, canSave bool) {
+	cfg, err := store.LoadConfig()
+	if err != nil || cfg.BoxID != started.BoxID {
+		logf("link changed during the push; nothing removed")
+		return
+	}
 	failed := false
 	if cfg.Claude.Hooked {
 		if UnhookClaude == nil || UnhookClaude(cfg.Claude.Previous) != nil {

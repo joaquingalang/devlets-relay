@@ -278,3 +278,90 @@ func TestPartialUnhookSavesRestoredTool(t *testing.T) {
 		t.Fatalf("claude unhooked %d times", calls)
 	}
 }
+
+func (r *rig) putCount() int {
+	n := 0
+	for _, q := range r.srv.Requests() {
+		if q.Method == "PUT" {
+			n++
+		}
+	}
+	return n
+}
+
+func TestReadCodexObeysDueRule(t *testing.T) {
+	r := setup(t)
+	r.cfg.Codex.Hooked = true
+	st := r.state(t)
+	used := 30.0
+	push.SetRefreshCodex(t, func(_ context.Context, s *store.State) error {
+		s.Reading.Tools["codex"] = contract.Tool{ReadAt: now, Windows: []contract.Window{{ID: "primary", UsedPercent: used, ResetsAt: now.Add(time.Hour)}}}
+		return nil
+	})
+	if err := push.Run(context.Background(), r.cfg, st, r.client, true, now); err != nil {
+		t.Fatal(err)
+	}
+	if r.putCount() != 1 {
+		t.Fatalf("first read must push, got %d PUTs", r.putCount())
+	}
+	// an unchanged Codex reading 6 minutes later is not worth a push (FR10)
+	st, _ = store.LoadState()
+	if err := push.Run(context.Background(), r.cfg, st, r.client, true, now.Add(6*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if r.putCount() != 1 {
+		t.Fatalf("unchanged reading pushed: %d PUTs", r.putCount())
+	}
+	// a 2-point move is
+	used = 32
+	st, _ = store.LoadState()
+	if err := push.Run(context.Background(), r.cfg, st, r.client, true, now.Add(7*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if r.putCount() != 2 {
+		t.Fatalf("moved reading not pushed: %d PUTs", r.putCount())
+	}
+}
+
+func TestPushOther404IsAFailure(t *testing.T) {
+	r := setup(t)
+	r.cfg.Claude = store.Hook{Hooked: true}
+	st := r.state(t)
+	calls := 0
+	push.UnhookClaude = func(*string) error { calls++; return nil }
+	t.Cleanup(func() { push.UnhookClaude = nil })
+	r.srv.ForceStatus(404) // a 404 whose body is not {"error":"not_found"}
+	if err := push.Run(context.Background(), r.cfg, st, r.client, false, now); err == nil {
+		t.Fatal("want an error")
+	}
+	if calls != 0 {
+		t.Fatal("unhooked on a foreign 404")
+	}
+	if _, err := store.LoadConfig(); err != nil {
+		t.Fatalf("config must stay: %v", err)
+	}
+	if saved, _ := store.LoadState(); !saved.NextAllowed.Equal(now.Add(time.Minute)) {
+		t.Fatalf("want backoff, NextAllowed %v", saved.NextAllowed)
+	}
+}
+
+func TestPushGoneIgnoredAfterRelink(t *testing.T) {
+	r := setup(t)
+	r.cfg.Claude = store.Hook{Hooked: true}
+	st := r.state(t)
+	// another `devlets link` replaced the link while this push was running
+	newer := *r.cfg
+	newer.BoxID = "b_newerbox"
+	if err := store.SaveConfig(&newer); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	push.UnhookClaude = func(*string) error { calls++; return nil }
+	t.Cleanup(func() { push.UnhookClaude = nil })
+	r.srv.DeleteBox(r.cfg.BoxID)
+	_ = push.Run(context.Background(), r.cfg, st, r.client, false, now)
+	got, err := store.LoadConfig()
+	if err != nil || got.BoxID != "b_newerbox" || calls != 0 {
+		t.Fatalf("acted on a stale 404: cfg=%+v err=%v unhooks=%d", got, err, calls)
+	}
+}

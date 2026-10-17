@@ -680,3 +680,15 @@ func TestUnlinkLeavesChangedStatusLine(t *testing.T) {
 		t.Errorf("config should be gone: %v", err)
 	}
 }
+
+func TestUnlinkUsesSavedAPIBase(t *testing.T) {
+	e := setup(t)
+	cfg := linkOnce(t, e)
+	var out bytes.Buffer
+	if err := Unlink(context.Background(), &out, Options{API: "http://127.0.0.1:1"}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !e.deleted(cfg.BoxID) {
+		t.Errorf("box not deleted at the saved API base")
+	}
+}

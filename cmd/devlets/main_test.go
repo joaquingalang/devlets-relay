@@ -103,3 +103,33 @@ func TestPush404RestoresAndUnlinks(t *testing.T) {
 		t.Fatalf("want ErrNotLinked, got %v", err)
 	}
 }
+
+func TestPushIgnoresDevletsAPI(t *testing.T) {
+	t.Setenv("DEVLETS_CONFIG_DIR", filepath.Join(t.TempDir(), "d"))
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("DEVLETS_API", "http://127.0.0.1:1") // unreachable: must not be used
+	srv := mailboxtest.New()
+	defer srv.Close()
+	key, _ := crypto.NewKey()
+	client := &mailbox.Client{Base: srv.URL, Version: "test"}
+	id, wt, err := client.Create(context.Background(), crypto.TokenHash(crypto.ReadToken(key)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &store.Config{APIBase: srv.URL, BoxID: id, WriteToken: wt, Key: crypto.B64(key), Computer: "PC"}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	st := &store.State{Reading: contract.Reading{V: 1, Tools: map[string]contract.Tool{"claude": {Windows: []contract.Window{{ID: "5h"}}}}}}
+	if err := store.SaveState(st); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"push"}, &out, &errb); code != 0 {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+	if _, code := srv.PhoneGet(id, crypto.ReadToken(key)); code != 200 {
+		t.Fatalf("reading did not reach the saved API base: %d", code)
+	}
+}

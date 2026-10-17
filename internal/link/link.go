@@ -132,14 +132,13 @@ func yesNo(r *bufio.Reader, out io.Writer, yes bool, question string) bool {
 	return a == "" || a == "y" || a == "yes"
 }
 
+// apiFor is where an existing box lives: the base saved at link time. Only a
+// new box uses opts.API (DEVLETS_API), which is then saved with it.
 func apiFor(opts Options, cfg *store.Config) string {
-	if opts.API != "" {
-		return opts.API
-	}
 	if cfg != nil && cfg.APIBase != "" {
 		return cfg.APIBase
 	}
-	return defaultAPI
+	return opts.api()
 }
 
 // Run is `devlets link`.

@@ -21,8 +21,13 @@ import (
 
 const timeout = 10 * time.Second
 
-// ErrGone means the server answered 404: the box is gone or the token is wrong.
+// ErrGone means the relay answered 404 {"error":"not_found"}: the box is gone
+// or the token is wrong. A 404 with any other body (a proxy, a wrong base URL)
+// is a StatusError, never ErrGone.
 var ErrGone = errors.New("mailbox: not found")
+
+// goneBody is the relay's exact 404 body.
+const goneBody = `{"error":"not_found"}`
 
 // RateLimited is returned for a 429.
 type RateLimited struct{ RetryAfter time.Duration }
@@ -88,10 +93,12 @@ func (c *Client) do(ctx context.Context, method, path, token string, body any) (
 	return resp, data, nil
 }
 
-func statusErr(resp *http.Response) error {
+func statusErr(resp *http.Response, body []byte) error {
 	switch resp.StatusCode {
 	case http.StatusNotFound:
-		return ErrGone
+		if strings.TrimSpace(string(body)) == goneBody {
+			return ErrGone
+		}
 	case http.StatusTooManyRequests:
 		s, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
 		return &RateLimited{RetryAfter: time.Duration(s) * time.Second}
@@ -106,7 +113,7 @@ func (c *Client) Create(ctx context.Context, readTokenHash string) (boxID, write
 		return "", "", err
 	}
 	if resp.StatusCode != http.StatusCreated {
-		return "", "", statusErr(resp)
+		return "", "", statusErr(resp, data)
 	}
 	var out struct {
 		BoxID      string `json:"boxId"`
@@ -120,12 +127,12 @@ func (c *Client) Create(ctx context.Context, readTokenHash string) (boxID, write
 
 // Put stores the newest reading.
 func (c *Client) Put(ctx context.Context, boxID, writeToken string, env crypto.Envelope) error {
-	resp, _, err := c.do(ctx, http.MethodPut, "/v1/relay/boxes/"+boxID, writeToken, env)
+	resp, data, err := c.do(ctx, http.MethodPut, "/v1/relay/boxes/"+boxID, writeToken, env)
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode != http.StatusNoContent {
-		return statusErr(resp)
+		return statusErr(resp, data)
 	}
 	return nil
 }
@@ -146,17 +153,17 @@ func (c *Client) Hello(ctx context.Context, boxID, writeToken string) (*crypto.E
 		}
 		return &env, nil
 	}
-	return nil, statusErr(resp)
+	return nil, statusErr(resp, data)
 }
 
 // Delete removes the box; token may be either token.
 func (c *Client) Delete(ctx context.Context, boxID, token string) error {
-	resp, _, err := c.do(ctx, http.MethodDelete, "/v1/relay/boxes/"+boxID, token, nil)
+	resp, data, err := c.do(ctx, http.MethodDelete, "/v1/relay/boxes/"+boxID, token, nil)
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode != http.StatusNoContent {
-		return statusErr(resp)
+		return statusErr(resp, data)
 	}
 	return nil
 }

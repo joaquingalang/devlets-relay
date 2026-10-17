@@ -93,7 +93,7 @@ func runWith(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		link.Version = version
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := link.Unlink(ctx, stdout, link.Options{API: os.Getenv("DEVLETS_API")}); err != nil {
+		if err := link.Unlink(ctx, stdout, link.Options{}); err != nil {
 			fmt.Fprintf(stderr, "devlets unlink: %v\n", err)
 			return 1
 		}
@@ -165,11 +165,9 @@ const pushTimeout = 45 * time.Second
 
 const defaultAPI = "https://api.getdevlets.com"
 
-// apiBase is DEVLETS_API, else the base saved at link time, else production (BR10).
+// apiBase is the base saved at link time, else production (BR10). DEVLETS_API
+// is honoured only by `devlets link`, which saves it into config.json.
 func apiBase(cfg *store.Config) string {
-	if v := os.Getenv("DEVLETS_API"); v != "" {
-		return v
-	}
 	if cfg.APIBase != "" {
 		return cfg.APIBase
 	}
