@@ -2,6 +2,9 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +12,8 @@ import (
 
 	"github.com/joaquingalang/devlets-relay/internal/claude"
 	"github.com/joaquingalang/devlets-relay/internal/codex"
+	"github.com/joaquingalang/devlets-relay/internal/mailbox"
+	"github.com/joaquingalang/devlets-relay/internal/push"
 	"github.com/joaquingalang/devlets-relay/internal/store"
 )
 
@@ -52,17 +57,20 @@ func runWith(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "claude-statusline":
 		// Never fails: the status line must keep working whatever happens here.
 		cfg, _ := store.LoadConfig()
+		claude.StartPush = push.StartDetached
 		_ = claude.RunStatusLine(stdin, stdout, cfg, time.Now())
 		return 0
 	case "codex-notify":
 		// Never fails and prints nothing: Codex runs this after every turn.
 		cfg, _ := store.LoadConfig()
 		codex.StartChain = codex.StartDetached
-		codex.StartPush = startPush
+		codex.StartPush = push.StartDetached
 		codex.ClientVersion = version
 		_ = codex.RunNotify(args[1:], cfg, time.Now())
 		return 0
-	case "link", "status", "unlink", "push":
+	case "push":
+		return runPush(args[1:], stderr)
+	case "link", "status", "unlink":
 		fmt.Fprintf(stderr, "devlets %s: not implemented yet\n", args[0])
 		return 1
 	default:
@@ -71,11 +79,57 @@ func runWith(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 }
 
-// startPush runs `devlets <args>` detached, using this same binary.
-func startPush(args ...string) error {
-	self, err := os.Executable()
-	if err != nil {
-		return err
+const defaultAPI = "https://api.getdevlets.com"
+
+// apiBase is DEVLETS_API, else the base saved at link time, else production (BR10).
+func apiBase(cfg *store.Config) string {
+	if v := os.Getenv("DEVLETS_API"); v != "" {
+		return v
 	}
-	return codex.StartDetached(append([]string{self}, args...))
+	if cfg.APIBase != "" {
+		return cfg.APIBase
+	}
+	return defaultAPI
+}
+
+// runPush is `devlets push [--read-codex]`. It prints nothing to stdout; its
+// stderr is push.log when it was started detached.
+func runPush(args []string, stderr io.Writer) int {
+	readCodex := false
+	for _, a := range args {
+		if a != "--read-codex" {
+			fmt.Fprintf(stderr, "devlets push: unknown flag %q\n", a)
+			return 2
+		}
+		readCodex = true
+	}
+	cfg, err := store.LoadConfig()
+	if errors.Is(err, store.ErrNotLinked) {
+		fmt.Fprintln(stderr, "Not linked. Run devlets link.")
+		return 1
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "devlets push: cannot read config")
+		return 1
+	}
+	st, err := store.LoadState()
+	if err != nil {
+		fmt.Fprintln(stderr, "devlets push: cannot read state")
+		return 1
+	}
+	push.Log = stderr
+	push.UnhookClaude = func(previous *string) error {
+		if previous == nil {
+			return claude.Unhook(nil)
+		}
+		return claude.Unhook(json.RawMessage(*previous))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	client := &mailbox.Client{Base: apiBase(cfg), Version: version}
+	if err := push.Run(ctx, cfg, st, client, readCodex, time.Now()); err != nil {
+		fmt.Fprintln(stderr, "devlets push:", err)
+		return 1
+	}
+	return 0
 }

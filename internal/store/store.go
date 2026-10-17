@@ -53,6 +53,8 @@ type State struct {
 	// CodexAttemptAt is when a Codex rate-limit read was last started, so a
 	// failing read is not retried on every turn.
 	CodexAttemptAt time.Time `json:"codexAttemptAt"`
+	// PushFailures counts failed pushes in a row, for the retry backoff.
+	PushFailures int `json:"pushFailures,omitempty"`
 }
 
 const (
