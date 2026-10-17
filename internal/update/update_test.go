@@ -205,3 +205,50 @@ func TestNoticeSilentOnError(t *testing.T) {
 	}
 	_ = store.Dir
 }
+
+func TestUpdateRefusesForeignAssetHost(t *testing.T) {
+	var evil int
+	evilSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { evil++ }))
+	defer evilSrv.Close()
+	name := AssetName("2.0.0", runtime.GOOS, runtime.GOARCH)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"tag_name":"v2.0.0","assets":[{"name":%q,"browser_download_url":%q},{"name":"checksums.txt","browser_download_url":%q}]}`,
+			name, evilSrv.URL+"/a", evilSrv.URL+"/c")
+	}))
+	defer api.Close()
+	exe := setup(t, api, "1.0.0")
+	err := Apply(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "refusing") {
+		t.Fatalf("want refusal, got %v", err)
+	}
+	if evil != 0 {
+		t.Errorf("foreign host was contacted %d times", evil)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(exe))
+	if got, _ := os.ReadFile(exe); string(got) != "OLD" || len(entries) != 1 {
+		t.Errorf("files changed: %v", entries)
+	}
+}
+
+func TestNoticeKeepsConcurrentPushState(t *testing.T) {
+	t.Setenv("DEVLETS_CONFIG_DIR", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A push saves state while Notice waits on the network.
+		st, _ := store.LoadState()
+		st.PushFailures = 7
+		st.LastPush.At = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+		_ = store.SaveState(st)
+		fmt.Fprint(w, `{"tag_name":"v2.0.0","assets":[]}`)
+	}))
+	defer srv.Close()
+	setup(t, srv, "1.0.0")
+	var out bytes.Buffer
+	Notice(&out, time.Now())
+	st, _ := store.LoadState()
+	if st.PushFailures != 7 || st.LastPush.At.IsZero() {
+		t.Errorf("push state clobbered: %+v", st)
+	}
+	if st.UpdateCheckedAt.IsZero() {
+		t.Errorf("check time not saved")
+	}
+}

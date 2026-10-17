@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"runtime"
@@ -71,20 +72,47 @@ func binaryName() string {
 	return "devlets"
 }
 
-func get(ctx context.Context, url string, limit int64) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// checkHost allows https URLs on github.com or *.githubusercontent.com, and
+// any URL on the host of BaseURL (the API, or httptest in tests).
+func checkHost(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if b, err := url.Parse(BaseURL); err == nil && b.Host != "" && u.Host == b.Host {
+		return nil
+	}
+	h := strings.ToLower(u.Hostname())
+	if u.Scheme == "https" && (h == "github.com" || strings.HasSuffix(h, ".githubusercontent.com")) {
+		return nil
+	}
+	return fmt.Errorf("refusing to download from %s", u.Host)
+}
+
+var client = &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("too many redirects")
+	}
+	return checkHost(req.URL.String())
+}}
+
+func get(ctx context.Context, rawURL string, limit int64) ([]byte, error) {
+	if err := checkHost(rawURL); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "devlets/"+Current)
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
+		return nil, fmt.Errorf("GET %s: %s", rawURL, resp.Status)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
@@ -236,6 +264,18 @@ func verify(sums []byte, name string, archive []byte) error {
 	return nil
 }
 
+// readCapped reads r fully, failing instead of truncating past maxDownload.
+func readCapped(r io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxDownload+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxDownload {
+		return nil, errors.New("archive entry too large")
+	}
+	return data, nil
+}
+
 func extract(archiveName string, archive []byte, binary string) ([]byte, error) {
 	if strings.HasSuffix(archiveName, ".zip") {
 		zr, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
@@ -249,7 +289,7 @@ func extract(archiveName string, archive []byte, binary string) ([]byte, error) 
 					return nil, err
 				}
 				defer rc.Close()
-				return io.ReadAll(io.LimitReader(rc, maxDownload))
+				return readCapped(rc)
 			}
 		}
 		return nil, fmt.Errorf("%s not found in archive", binary)
@@ -268,7 +308,7 @@ func extract(archiveName string, archive []byte, binary string) ([]byte, error) 
 			return nil, err
 		}
 		if h.Typeflag == tar.TypeReg && path.Base(h.Name) == binary {
-			return io.ReadAll(io.LimitReader(tr, maxDownload))
+			return readCapped(tr)
 		}
 	}
 }
@@ -322,8 +362,12 @@ func Notice(out io.Writer, now time.Time) {
 	ctx, cancel := context.WithTimeout(context.Background(), noticeTimeout)
 	defer cancel()
 	_, newer, err := Check(ctx)
-	st.UpdateCheckedAt = now // also after a failure, so offline status stays fast
-	_ = store.SaveState(st)
+	// Reload: a push may have saved state while we waited on the network.
+	// Change only our field, and do not save if state cannot be read.
+	if fresh, lerr := store.LoadState(); lerr == nil {
+		fresh.UpdateCheckedAt = now // also after a failure, so offline status stays fast
+		_ = store.SaveState(fresh)
+	}
 	if err == nil && newer {
 		fmt.Fprintln(out, "A newer version is available: devlets update")
 	}

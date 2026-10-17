@@ -109,6 +109,10 @@ func runUpdate(stdout, stderr io.Writer) int {
 	update.Current = version
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	if version == "dev" {
+		fmt.Fprintln(stdout, "This is a development build. Install a release to update.")
+		return 0
+	}
 	latest, newer, err := update.Check(ctx)
 	if err != nil {
 		fmt.Fprintf(stderr, "devlets update: %v\n", err)
