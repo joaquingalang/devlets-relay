@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -157,16 +158,19 @@ func codexHome(t *testing.T, content *string) string {
 
 func TestNotifyHookUnhookRestoresBytes(t *testing.T) {
 	cases := map[string]string{
-		"one line":                      "model = \"gpt-5\"\nnotify = [\"/bin/x\", \"turn-ended\"]\n\n[tui]\nnotifications = true\n",
-		"multi line":                    "model = \"gpt-5\"\nnotify = [\n  \"/bin/x\", # helper\n  \"turn-ended\",\n]\nsandbox = \"read-only\"\n\n[tui]\nx = 1\n",
-		"table first":                   "[tui]\nnotifications = true\n",
-		"notify only in a table":        "model = \"gpt-5\"\n\n[tui]\nnotify = [\"not\", \"top-level\"]\n",
-		"no notify no table":            "model = \"gpt-5\"\n",
-		"no final newline":              "model = \"gpt-5\"",
-		"notify at eof no newline":      "model = 1\nnotify = [\"a\"]",
-		"crlf":                          "model = 1\r\nnotify = [\"a\",\r\n \"b\"]\r\n[tui]\r\n",
-		"empty":                         "",
-		"multiline string before table": "note = \"\"\"\n[not a table]\n\"\"\"\n[tui]\n",
+		"one line":                          "model = \"gpt-5\"\nnotify = [\"/bin/x\", \"turn-ended\"]\n\n[tui]\nnotifications = true\n",
+		"multi line":                        "model = \"gpt-5\"\nnotify = [\n  \"/bin/x\", # helper\n  \"turn-ended\",\n]\nsandbox = \"read-only\"\n\n[tui]\nx = 1\n",
+		"table first":                       "[tui]\nnotifications = true\n",
+		"notify only in a table":            "model = \"gpt-5\"\n\n[tui]\nnotify = [\"not\", \"top-level\"]\n",
+		"no notify no table":                "model = \"gpt-5\"\n",
+		"no final newline":                  "model = \"gpt-5\"",
+		"notify at eof no newline":          "model = 1\nnotify = [\"a\"]",
+		"crlf":                              "model = 1\r\nnotify = [\"a\",\r\n \"b\"]\r\n[tui]\r\n",
+		"empty":                             "",
+		"commented notify":                  "# notify = [\"a\", \"b\"]\nmodel = 1\n[tui]\n",
+		"notify text in a multiline string": "note = \"\"\"\nnotify = [\"x\"]\n\"\"\"\n[tui]\n",
+		"notify text in a literal multiline string": "note = '''\nnotify = [\"x\"]\n[other]\n'''\nmodel = 1\n",
+		"multiline string before table":             "note = \"\"\"\n[not a table]\n\"\"\"\n[tui]\n",
 	}
 	for name, orig := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -341,5 +345,63 @@ func assertKept(t *testing.T, st *store.State) {
 	t.Helper()
 	if st.Reading.Tools["codex"].Plan != "kept" || len(st.Reading.Tools) != 1 {
 		t.Fatalf("previous reading lost: %+v", st.Reading.Tools)
+	}
+}
+
+func alive(pid string) bool {
+	if runtime.GOOS == "windows" {
+		out, _ := exec.Command("tasklist", "/FI", "PID eq "+pid, "/NH").Output()
+		return strings.Contains(string(out), " "+pid+" ")
+	}
+	return exec.Command("kill", "-0", pid).Run() == nil
+}
+
+// A shim-style server: the process we start exits on its own, leaving a
+// long-lived child holding the pipes. The child must not outlive the read.
+func TestShimChildIsKilled(t *testing.T) {
+	useFake(t, "shim")
+	readTimeout = 500 * time.Millisecond
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	t.Setenv("FAKE_CODEX_CHILDPID", pidFile)
+	if _, err := ReadRateLimits(context.Background(), fakeBin); err == nil {
+		t.Fatal("want an error")
+	}
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("child never started: %v", err)
+	}
+	pid := strings.TrimSpace(string(b))
+	deadline := time.Now().Add(5 * time.Second)
+	for alive(pid) && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if alive(pid) {
+		_ = exec.Command("taskkill", "/F", "/PID", pid).Run()
+		t.Fatalf("child %s still running", pid)
+	}
+}
+
+func TestRunNotifyUnreadableStateWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DEVLETS_CONFIG_DIR", dir)
+	bad := filepath.Join(dir, "state.json")
+	if err := os.WriteFile(bad, []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pushes := 0
+	oldP := StartPush
+	StartPush = func(...string) error { pushes++; return nil }
+	defer func() { StartPush = oldP }()
+	cfg := &store.Config{}
+	if err := RunNotify([]string{`{"type":"agent-turn-complete"}`}, cfg, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(bad); string(b) != "{broken" || pushes != 0 {
+		t.Fatalf("state touched or read started: %q pushes=%d", b, pushes)
+	}
+	// nil config: nothing at all
+	codexHome(t, nil)
+	if err := RunNotify([]string{`{"type":"agent-turn-complete"}`}, nil, time.Now()); err != nil || pushes != 0 {
+		t.Fatalf("%v %d", err, pushes)
 	}
 }

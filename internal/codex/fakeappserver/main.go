@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"strconv"
 	"time"
 )
 
@@ -25,6 +27,18 @@ func main() {
 	if mode == "" {
 		mode = "ok"
 	}
+	switch mode {
+	case "shim": // like the npm .cmd shim: start the real server as a child, then exit
+		c := exec.Command(os.Args[0])
+		c.Env = append(os.Environ(), "FAKE_CODEX_MODE=sleeper")
+		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+		_ = c.Start()
+		return
+	case "sleeper":
+		_ = os.WriteFile(os.Getenv("FAKE_CODEX_CHILDPID"), []byte(strconv.Itoa(os.Getpid())), 0o644)
+		time.Sleep(time.Hour)
+		return
+	}
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	for sc.Scan() {
@@ -34,6 +48,7 @@ func main() {
 		}
 		switch m.Method {
 		case "initialize":
+			send(`{"id":0,"method":"server/request"}`) // a server-initiated request, not our reply
 			send(`{"method":"remoteControl/status/changed","params":{"status":"off"}}`)
 			send(fmt.Sprintf(`{"id":%d,"result":{"userAgent":"fake/0","codexHome":"x","platformFamily":"unix","platformOs":"linux"}}`, *m.ID))
 		case "account/rateLimits/read":
@@ -56,6 +71,7 @@ func main() {
 					_ = json.Compact(&c, v.Result)
 					result = c.String()
 				}
+				send(`{"id":1,"method":"server/request"}`)
 				send(`{"method":"account/rateLimits/updated","params":{}}`)
 				time.Sleep(50 * time.Millisecond)
 				send(fmt.Sprintf(`{"id":%d,"result":%s}`, *m.ID, result))

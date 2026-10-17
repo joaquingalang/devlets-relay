@@ -39,6 +39,9 @@ func StartDetached(argv []string) error {
 // arguments, then a Codex read is started when one is due (at most one per
 // five minutes). It never fails and prints nothing: errors are swallowed.
 func RunNotify(args []string, cfg *store.Config, now time.Time) error {
+	// The previous notify argv is saved only in config.json. When the config
+	// cannot be loaded (cfg == nil) there is nothing to chain, so do nothing:
+	// no chain, no read, and no write to Codex's config or to state.
 	if cfg == nil {
 		return nil
 	}
@@ -53,7 +56,9 @@ func RunNotify(args []string, cfg *store.Config, now time.Time) error {
 	}
 	st, err := store.LoadState()
 	if err != nil || st == nil {
-		st = &store.State{}
+		// Unreadable state: never write an empty one over it, and skip the read
+		// (the attempt cannot be recorded, so it could repeat every turn).
+		return nil
 	}
 	last := st.CodexAttemptAt
 	if r := st.Reading.Tools["codex"].ReadAt; r.After(last) {

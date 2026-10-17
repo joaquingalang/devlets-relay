@@ -9,10 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
 	"os/exec"
-	"runtime"
-	"strconv"
 	"time"
 
 	"github.com/tidwall/gjson"
@@ -73,7 +70,8 @@ func ReadRateLimits(ctx context.Context, codexPath string) (contract.Tool, error
 
 	cmd := exec.CommandContext(ctx, codexPath, "app-server")
 	cmd.Stderr = nil
-	cmd.Cancel = func() error { return killTree(cmd) }
+	prepare(cmd)
+	cmd.Cancel = func() error { return cmd.Process.Kill() }
 	cmd.WaitDelay = 500 * time.Millisecond // an npm shim leaves a grandchild holding the pipes
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -86,7 +84,9 @@ func ReadRateLimits(ctx context.Context, codexPath string) (contract.Tool, error
 	if err := cmd.Start(); err != nil {
 		return contract.Tool{}, errors.New("could not start codex app-server")
 	}
+	stop := contain(cmd)
 	defer func() {
+		stop() // kills the whole process tree, shim children included
 		_ = stdin.Close()
 		cancel()
 		_ = cmd.Wait()
@@ -126,7 +126,7 @@ func ReadRateLimits(ctx context.Context, codexPath string) (contract.Tool, error
 					return nil, errors.New("codex app-server closed early")
 				}
 				msg := gjson.ParseBytes(r.raw)
-				if idv := msg.Get("id"); idv.Type != gjson.Number || int(idv.Int()) != id {
+				if idv := msg.Get("id"); idv.Type != gjson.Number || int(idv.Int()) != id || msg.Get("method").Exists() {
 					continue
 				}
 				if msg.Get("error").Exists() {
@@ -186,16 +186,4 @@ func Refresh(ctx context.Context, codexPath string, st *store.State) error {
 	}
 	st.Reading.Tools["codex"] = tool
 	return nil
-}
-
-// killTree stops the server and, on Windows, anything the npm .cmd shim
-// started under it.
-func killTree(cmd *exec.Cmd) error {
-	if runtime.GOOS == "windows" && cmd.Process != nil {
-		_ = exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()
-	}
-	if cmd.Process == nil {
-		return os.ErrProcessDone
-	}
-	return cmd.Process.Kill()
 }
