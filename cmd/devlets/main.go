@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"time"
 
 	"github.com/joaquingalang/devlets-relay/internal/claude"
 	"github.com/joaquingalang/devlets-relay/internal/codex"
+	"github.com/joaquingalang/devlets-relay/internal/link"
 	"github.com/joaquingalang/devlets-relay/internal/mailbox"
 	"github.com/joaquingalang/devlets-relay/internal/push"
 	"github.com/joaquingalang/devlets-relay/internal/store"
@@ -70,13 +72,54 @@ func runWith(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	case "push":
 		return runPush(args[1:], stderr)
-	case "link", "status", "unlink":
-		fmt.Fprintf(stderr, "devlets %s: not implemented yet\n", args[0])
-		return 1
+	case "link":
+		return runLink(args[1:], stdin, stdout, stderr)
+	case "status":
+		link.Version = version
+		if err := link.Status(stdout, time.Now()); err != nil {
+			fmt.Fprintf(stderr, "devlets status: %v\n", err)
+			return 1
+		}
+		return 0
+	case "unlink":
+		link.Version = version
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := link.Unlink(ctx, stdout, link.Options{API: os.Getenv("DEVLETS_API")}); err != nil {
+			fmt.Fprintf(stderr, "devlets unlink: %v\n", err)
+			return 1
+		}
+		return 0
 	default:
 		fmt.Fprintf(stderr, "devlets: unknown command %q\n\n%s", args[0], usage)
 		return 2
 	}
+}
+
+// runLink is `devlets link [--yes] [--no-claude] [--no-codex]`.
+func runLink(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	opts := link.Options{API: os.Getenv("DEVLETS_API")}
+	for _, a := range args {
+		switch a {
+		case "--yes", "-y":
+			opts.Yes = true
+		case "--no-claude":
+			opts.NoClaude = true
+		case "--no-codex":
+			opts.NoCodex = true
+		default:
+			fmt.Fprintf(stderr, "devlets link: unknown flag %q\n", a)
+			return 2
+		}
+	}
+	link.Version = version
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if err := link.Run(ctx, stdin, stdout, opts); err != nil {
+		fmt.Fprintf(stderr, "devlets link: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // pushTimeout must stay below the 60 s push.lock staleness limit, so a run
