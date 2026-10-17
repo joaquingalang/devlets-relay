@@ -230,6 +230,8 @@ func TestLockPreventsConcurrentPush(t *testing.T) {
 
 func TestStartDetachedSkipsWhenRecentOrLocked(t *testing.T) {
 	setup(t)
+	// never spawn the test binary if the guard regresses
+	push.SetExecutable(t, func() (string, error) { return filepath.Join(t.TempDir(), "no-such-binary"), nil })
 	dir := os.Getenv("DEVLETS_CONFIG_DIR")
 	_ = os.MkdirAll(dir, 0o700)
 	_ = os.WriteFile(filepath.Join(dir, "push.lock"), nil, 0o600)
@@ -246,5 +248,33 @@ func TestStartDetachedSkipsWhenRecentOrLocked(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "push.log")); !os.IsNotExist(err) {
 		t.Fatal("spawned despite recent start")
+	}
+}
+
+func TestPartialUnhookSavesRestoredTool(t *testing.T) {
+	r := setup(t)
+	r.cfg.Claude = store.Hook{Hooked: true}
+	r.cfg.Codex = store.Hook{Hooked: true}
+	st := r.state(t)
+	calls := 0
+	push.UnhookClaude = func(*string) error { calls++; return nil }
+	t.Cleanup(func() { push.UnhookClaude = nil })
+	// make the Codex restore fail: config.toml is a directory
+	if err := os.Mkdir(filepath.Join(os.Getenv("CODEX_HOME"), "config.toml"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r.srv.DeleteBox(r.cfg.BoxID)
+	_ = push.Run(context.Background(), r.cfg, st, r.client, false, now)
+	got, err := store.LoadConfig()
+	if err != nil {
+		t.Fatalf("config must stay: %v", err)
+	}
+	if got.Claude.Hooked || !got.Codex.Hooked {
+		t.Fatalf("want claude restored and codex still hooked: %+v %+v", got.Claude, got.Codex)
+	}
+	// retry (past the backoff) must not touch Claude again
+	_ = push.Run(context.Background(), got, st, r.client, false, now.Add(time.Hour))
+	if calls != 1 {
+		t.Fatalf("claude unhooked %d times", calls)
 	}
 }

@@ -9,6 +9,9 @@ import (
 	"github.com/joaquingalang/devlets-relay/internal/store"
 )
 
+// executable is the program StartDetached spawns; tests replace it.
+var executable = os.Executable
+
 // StartDetached runs `devlets <args>` (this binary) detached, with stdout and
 // stderr going to push.log. It does nothing when a push is running (push.lock)
 // or one was started less than 30 s ago, so the status line (~every 300 ms)
@@ -24,7 +27,7 @@ func StartDetached(args ...string) error {
 	if recent(filepath.Join(dir, lockName), lockStale) || recent(filepath.Join(dir, startedName), startGap) {
 		return nil
 	}
-	self, err := os.Executable()
+	self, err := executable()
 	if err != nil {
 		return err
 	}

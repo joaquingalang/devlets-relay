@@ -56,6 +56,9 @@ func hookedList(cfg *store.Config) []string {
 	return list
 }
 
+// Every failure Run returns has already been written to Log; callers only
+// turn it into an exit code.
+//
 // Run reads Codex (when readCodex), encrypts and sends the current reading.
 // It holds push.lock for the whole run and does nothing when another push is
 // running or the server asked us to wait. A 404 means the box is gone: both
@@ -67,6 +70,7 @@ func Run(ctx context.Context, cfg *store.Config, st *store.State, client *mailbo
 		return nil
 	}
 	if err != nil {
+		logf("push: cannot take the lock")
 		return err
 	}
 	defer release()
@@ -108,14 +112,17 @@ func Run(ctx context.Context, cfg *store.Config, st *store.State, client *mailbo
 
 	key, err := crypto.UnB64(cfg.Key)
 	if err != nil {
+		logf("push: bad key in config")
 		return errors.New("push: bad key in config")
 	}
 	plain, err := json.Marshal(reading)
 	if err != nil {
+		logf("push: encode failed")
 		return errors.New("push: encode failed")
 	}
 	env, err := crypto.Seal(key, cfg.BoxID, crypto.Version, plain)
 	if err != nil {
+		logf("push: encrypt failed")
 		return errors.New("push: encrypt failed")
 	}
 
@@ -173,6 +180,10 @@ func unlink(cfg *store.Config, now time.Time, canSave bool) {
 		if UnhookClaude == nil || UnhookClaude(cfg.Claude.Previous) != nil {
 			failed = true
 			logf("could not restore Claude Code settings")
+		} else {
+			// remember it now, so a retry never re-writes the restored settings
+			cfg.Claude = store.Hook{}
+			_ = store.SaveConfig(cfg)
 		}
 	}
 	if cfg.Codex.Hooked {
@@ -183,6 +194,9 @@ func unlink(cfg *store.Config, now time.Time, canSave bool) {
 		if codex.Unhook(prev) != nil {
 			failed = true
 			logf("could not restore Codex config")
+		} else {
+			cfg.Codex = store.Hook{}
+			_ = store.SaveConfig(cfg)
 		}
 	}
 	if failed {

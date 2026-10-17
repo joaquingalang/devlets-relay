@@ -79,6 +79,10 @@ func runWith(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 }
 
+// pushTimeout must stay below the 60 s push.lock staleness limit, so a run
+// never outlives its lock.
+const pushTimeout = 45 * time.Second
+
 const defaultAPI = "https://api.getdevlets.com"
 
 // apiBase is DEVLETS_API, else the base saved at link time, else production (BR10).
@@ -124,12 +128,11 @@ func runPush(args []string, stderr io.Writer) int {
 		}
 		return claude.Unhook(json.RawMessage(*previous))
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
 	defer cancel()
 	client := &mailbox.Client{Base: apiBase(cfg), Version: version}
 	if err := push.Run(ctx, cfg, st, client, readCodex, time.Now()); err != nil {
-		fmt.Fprintln(stderr, "devlets push:", err)
-		return 1
+		return 1 // already logged by push.Run
 	}
 	return 0
 }

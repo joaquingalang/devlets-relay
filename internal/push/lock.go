@@ -1,6 +1,8 @@
 package push
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -35,8 +37,10 @@ func acquireLock(now time.Time) (release func(), err error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
+			token := newToken()
+			_, _ = f.WriteString(token)
 			_ = f.Close()
-			return func() { _ = os.Remove(path) }, nil
+			return func() { releaseLock(path, token) }, nil
 		}
 		if !errors.Is(err, os.ErrExist) {
 			return nil, err
@@ -51,6 +55,20 @@ func acquireLock(now time.Time) (release func(), err error) {
 		_ = os.Remove(path) // stale
 	}
 	return nil, ErrLocked
+}
+
+func newToken() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// releaseLock removes the lock only if it is still ours, so a run that
+// outlived the staleness limit cannot delete its successor's lock.
+func releaseLock(path, token string) {
+	if b, err := os.ReadFile(path); err == nil && string(b) == token {
+		_ = os.Remove(path)
+	}
 }
 
 // recent reports whether path was modified within d.

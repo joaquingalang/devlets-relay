@@ -2,12 +2,18 @@ package codex
 
 import (
 	"os/exec"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-func prepare(cmd *exec.Cmd) {}
+// prepare gives the child no console window (the detached push has no console,
+// so Windows would otherwise open a visible one for codex.cmd / node).
+func prepare(cmd *exec.Cmd) {
+	const createNoWindow = 0x08000000
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+}
 
 // contain puts the started child in a Job Object that kills everything in it
 // when the handle closes, so the npm .cmd shim's node/codex children cannot
