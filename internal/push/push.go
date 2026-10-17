@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/joaquingalang/devlets-relay/internal/codex"
@@ -90,12 +88,17 @@ func Run(ctx context.Context, cfg *store.Config, st *store.State, client *mailbo
 		}
 	}
 	// The status line may have written state meanwhile: reload it, fold in the
-	// fresh Codex read, and honour the newest NextAllowed. If it cannot be
-	// loaded, nothing is saved (never overwrite with an empty state).
+	// fresh Codex read, and honour the newest NextAllowed. An unreadable
+	// state.json is read as empty and replaced only once there is a real
+	// reading to save (the status line heals it the same way), so a corrupt
+	// file never blocks a Codex-only user and is never replaced by nothing.
 	cur, lerr := store.LoadState()
 	canSave := lerr == nil && cur != nil
 	if !canSave {
-		cur = st
+		cur = &store.State{}
+		if codexTool != nil {
+			canSave = true
+		}
 	}
 	if codexTool != nil {
 		if cur.Reading.Tools == nil {
@@ -223,10 +226,7 @@ func unlink(started *store.Config, now time.Time, canSave bool) {
 		})
 		return
 	}
-	dir, err := store.Dir()
-	if err != nil {
-		return
+	if err := store.Remove(); err != nil {
+		logf("could not remove the local link files")
 	}
-	_ = os.Remove(filepath.Join(dir, "config.json"))
-	_ = os.Remove(filepath.Join(dir, "state.json"))
 }

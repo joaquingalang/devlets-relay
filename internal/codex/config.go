@@ -89,7 +89,8 @@ func (s *scanState) feed(line string) {
 	}
 }
 
-var notifyKey = regexp.MustCompile(`^notify[ \t]*=`)
+// notifyKey matches the top-level key bare or quoted: notify, "notify", 'notify'.
+var notifyKey = regexp.MustCompile(`^(notify|"notify"|'notify')[ \t]*=`)
 
 // locate finds the top-level notify statement. It returns the line range
 // [start,end) of the whole span, or start == -1 when absent, plus the index of

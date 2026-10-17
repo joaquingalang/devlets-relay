@@ -365,3 +365,46 @@ func TestPushGoneIgnoredAfterRelink(t *testing.T) {
 		t.Fatalf("acted on a stale 404: cfg=%+v err=%v unhooks=%d", got, err, calls)
 	}
 }
+
+func TestCorruptStateHealsWithCodexReading(t *testing.T) {
+	r := setup(t)
+	r.cfg.Codex.Hooked = true
+	if err := store.SaveConfig(r.cfg); err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(os.Getenv("DEVLETS_CONFIG_DIR"), "state.json")
+	if err := os.WriteFile(bad, []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	push.SetRefreshCodex(t, func(_ context.Context, s *store.State) error {
+		if s.Reading.Tools == nil {
+			s.Reading.Tools = map[string]contract.Tool{}
+		}
+		s.Reading.Tools["codex"] = contract.Tool{ReadAt: now, Windows: []contract.Window{{ID: "primary", UsedPercent: 9, ResetsAt: now.Add(time.Hour)}}}
+		return nil
+	})
+	if err := push.Run(context.Background(), r.cfg, &store.State{}, r.client, true, now); err != nil {
+		t.Fatal(err)
+	}
+	if r.putCount() != 1 {
+		t.Fatalf("want one PUT, got %d", r.putCount())
+	}
+	st, err := store.LoadState()
+	if err != nil || st.Reading.Tools["codex"].Windows == nil || !st.LastPush.At.Equal(now) {
+		t.Fatalf("state not healed: %+v %v", st, err)
+	}
+}
+
+func TestCorruptStateWithoutReadingStaysUntouched(t *testing.T) {
+	r := setup(t)
+	if err := store.SaveConfig(r.cfg); err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(os.Getenv("DEVLETS_CONFIG_DIR"), "state.json")
+	_ = os.WriteFile(bad, []byte("{broken"), 0o600)
+	push.SetRefreshCodex(t, func(context.Context, *store.State) error { return errors.New("no codex") })
+	_ = push.Run(context.Background(), r.cfg, &store.State{}, r.client, true, now)
+	if b, _ := os.ReadFile(bad); string(b) != "{broken" {
+		t.Fatalf("corrupt state replaced without a reading: %q", b)
+	}
+}

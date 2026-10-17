@@ -171,6 +171,8 @@ func TestNotifyHookUnhookRestoresBytes(t *testing.T) {
 		"notify text in a multiline string": "note = \"\"\"\nnotify = [\"x\"]\n\"\"\"\n[tui]\n",
 		"notify text in a literal multiline string": "note = '''\nnotify = [\"x\"]\n[other]\n'''\nmodel = 1\n",
 		"multiline string before table":             "note = \"\"\"\n[not a table]\n\"\"\"\n[tui]\n",
+		"quoted key":                                "model = 1\n\"notify\" = [\"/bin/x\", \"turn-ended\"]\n[tui]\n",
+		"literal quoted key":                        "'notify'= [\"/bin/x\", \"turn-ended\"]\nmodel = 1\n",
 	}
 	for name, orig := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -387,6 +389,9 @@ func TestShimChildIsKilled(t *testing.T) {
 	}
 }
 
+// A corrupt state.json is read as empty: the read is started (so Codex-only
+// users are not stuck) but the corrupt file is not replaced just to record the
+// attempt; the push replaces it once it has a real reading.
 func TestRunNotifyUnreadableStateWritesNothing(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("DEVLETS_CONFIG_DIR", dir)
@@ -402,12 +407,12 @@ func TestRunNotifyUnreadableStateWritesNothing(t *testing.T) {
 	if err := RunNotify([]string{`{"type":"agent-turn-complete"}`}, cfg, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(bad); string(b) != "{broken" || pushes != 0 {
-		t.Fatalf("state touched or read started: %q pushes=%d", b, pushes)
+	if b, _ := os.ReadFile(bad); string(b) != "{broken" || pushes != 1 {
+		t.Fatalf("state touched or read not started: %q pushes=%d", b, pushes)
 	}
 	// nil config: nothing at all
 	codexHome(t, nil)
-	if err := RunNotify([]string{`{"type":"agent-turn-complete"}`}, nil, time.Now()); err != nil || pushes != 0 {
+	if err := RunNotify([]string{`{"type":"agent-turn-complete"}`}, nil, time.Now()); err != nil || pushes != 1 {
 		t.Fatalf("%v %d", err, pushes)
 	}
 }

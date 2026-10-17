@@ -55,10 +55,13 @@ func RunNotify(args []string, cfg *store.Config, now time.Time) error {
 		return nil
 	}
 	st, err := store.LoadState()
-	if err != nil || st == nil {
-		// Unreadable state: never write an empty one over it, and skip the read
-		// (the attempt cannot be recorded, so it could repeat every turn).
-		return nil
+	corrupt := err != nil || st == nil
+	if corrupt {
+		// Unreadable state is read as empty and the read is started, so a
+		// Codex-only user is never stuck; the push replaces the file once it
+		// has a real reading. The attempt is not saved over the corrupt file,
+		// so until then StartDetached's 30 s gap and push.lock bound the reads.
+		st = &store.State{}
 	}
 	last := st.CodexAttemptAt
 	if r := st.Reading.Tools["codex"].ReadAt; r.After(last) {
@@ -68,7 +71,7 @@ func RunNotify(args []string, cfg *store.Config, now time.Time) error {
 		return nil
 	}
 	st.CodexAttemptAt = now.UTC()
-	if store.SaveState(st) != nil {
+	if !corrupt && store.SaveState(st) != nil {
 		return nil // can't record the attempt, so don't risk a read on every turn
 	}
 	if StartPush != nil {

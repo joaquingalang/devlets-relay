@@ -30,13 +30,18 @@ Commands:
   status        Show what is linked and the last reading
   unlink        Remove the link and the hooks
   update        Install the latest version
-  push          Read usage and send it now
   claude-statusline   (used by Claude Code)
   codex-notify        (used by Codex)
 
 Flags:
   --version     Print the version
 `
+
+// The hook entry points; tests replace them.
+var (
+	runStatusLine = claude.RunStatusLine
+	runNotify     = codex.RunNotify
+)
 
 func main() {
 	update.Current = version
@@ -62,17 +67,19 @@ func runWith(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	case "claude-statusline":
 		// Never fails: the status line must keep working whatever happens here.
+		defer func() { _ = recover() }()
 		cfg, _ := store.LoadConfig()
 		claude.StartPush = push.StartDetached
-		_ = claude.RunStatusLine(stdin, stdout, cfg, time.Now())
+		_ = runStatusLine(stdin, stdout, cfg, time.Now())
 		return 0
 	case "codex-notify":
 		// Never fails and prints nothing: Codex runs this after every turn.
+		defer func() { _ = recover() }()
 		cfg, _ := store.LoadConfig()
 		codex.StartChain = codex.StartDetached
 		codex.StartPush = push.StartDetached
 		codex.ClientVersion = version
-		_ = codex.RunNotify(args[1:], cfg, time.Now())
+		_ = runNotify(args[1:], cfg, time.Now())
 		return 0
 	case "push":
 		return runPush(args[1:], stderr)
@@ -130,7 +137,7 @@ func runUpdate(stdout, stderr io.Writer) int {
 	return 0
 }
 
-// runLink is`devlets link [--yes] [--no-claude] [--no-codex]`.
+// runLink is `devlets link [--yes] [--no-claude] [--no-codex]`.
 func runLink(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	opts := link.Options{API: os.Getenv("DEVLETS_API")}
 	for _, a := range args {
@@ -203,8 +210,7 @@ func runPush(args []string, stderr io.Writer) int {
 	}
 	st, err := store.LoadState()
 	if err != nil {
-		fmt.Fprintln(stderr, "devlets push: cannot read state")
-		return 1
+		st = &store.State{} // unreadable: read as empty; push.Run heals it with a real reading
 	}
 	push.Log = stderr
 	push.UnhookClaude = func(previous *string) error {

@@ -384,3 +384,18 @@ func TestHookKeepsMode(t *testing.T) {
 		t.Fatalf("mode %v", fi.Mode().Perm())
 	}
 }
+
+func TestCorruptStateHealsWithClaudeReading(t *testing.T) {
+	e := setup(t, nil)
+	bad := filepath.Join(os.Getenv("DEVLETS_CONFIG_DIR"), "state.json")
+	os.WriteFile(bad, []byte("{broken"), 0o600)
+	_ = RunStatusLine(bytes.NewReader(golden(t, "claude-statusline-without-rate-limits.json")), &bytes.Buffer{}, e.cfg, now)
+	if b, _ := os.ReadFile(bad); string(b) != "{broken" {
+		t.Fatal("replaced without a reading")
+	}
+	_ = RunStatusLine(bytes.NewReader(golden(t, "claude-statusline-with-rate-limits.json")), &bytes.Buffer{}, e.cfg, now)
+	st, err := store.LoadState()
+	if err != nil || len(st.Reading.Tools["claude"].Windows) != 2 || len(e.pushes) != 1 {
+		t.Fatalf("not healed: %+v %v pushes=%v", st, err, e.pushes)
+	}
+}

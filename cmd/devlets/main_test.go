@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/joaquingalang/devlets-relay/internal/claude"
 	"github.com/joaquingalang/devlets-relay/internal/codex"
@@ -131,5 +133,39 @@ func TestPushIgnoresDevletsAPI(t *testing.T) {
 	}
 	if _, code := srv.PhoneGet(id, crypto.ReadToken(key)); code != 200 {
 		t.Fatalf("reading did not reach the saved API base: %d", code)
+	}
+}
+
+func TestHookEntryPointsSurvivePanics(t *testing.T) {
+	t.Setenv("DEVLETS_CONFIG_DIR", filepath.Join(t.TempDir(), "d"))
+	oldS, oldN := runStatusLine, runNotify
+	runStatusLine = func(io.Reader, io.Writer, *store.Config, time.Time) error { panic("boom") }
+	runNotify = func([]string, *store.Config, time.Time) error { panic("boom") }
+	defer func() { runStatusLine, runNotify = oldS, oldN }()
+	for _, args := range [][]string{{"claude-statusline"}, {"codex-notify", "{}"}} {
+		var out, errb bytes.Buffer
+		if code := runWith(args, strings.NewReader("{}"), &out, &errb); code != 0 || out.Len() != 0 {
+			t.Errorf("%s: code %d out %q", args[0], code, out.String())
+		}
+	}
+}
+
+func TestPushWithCorruptStateRuns(t *testing.T) {
+	t.Setenv("DEVLETS_CONFIG_DIR", filepath.Join(t.TempDir(), "d"))
+	if err := store.SaveConfig(&store.Config{APIBase: "http://127.0.0.1:1", BoxID: "b", Key: crypto.B64(make([]byte, 32))}); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(os.Getenv("DEVLETS_CONFIG_DIR"), "state.json"), []byte("{broken"), 0o600)
+	var out, errb bytes.Buffer
+	if code := run([]string{"push"}, &out, &errb); code != 0 {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+}
+
+func TestUsageHidesInternalPush(t *testing.T) {
+	var out, errb bytes.Buffer
+	run([]string{"help"}, &out, &errb)
+	if strings.Contains(out.String(), "push") {
+		t.Fatalf("usage lists the internal push command:\n%s", out.String())
 	}
 }

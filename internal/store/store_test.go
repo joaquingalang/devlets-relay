@@ -121,3 +121,30 @@ func TestDirPerOS(t *testing.T) {
 		t.Fatalf("override = %q", got)
 	}
 }
+
+func TestRemoveDespiteHeldPushLog(t *testing.T) {
+	d := useTemp(t)
+	if err := SaveConfig(&Config{BoxID: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveState(&State{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"push.started", "push.lock"} {
+		_ = os.WriteFile(filepath.Join(d, n), nil, 0o600)
+	}
+	// a running push holds push.log open (Windows then refuses to delete it)
+	lf, err := os.OpenFile(filepath.Join(d, "push.log"), os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lf.Close()
+	if err := Remove(); err != nil {
+		t.Fatalf("Remove failed over a held push.log: %v", err)
+	}
+	for _, n := range []string{"config.json", "state.json", "push.started", "push.lock"} {
+		if _, err := os.Stat(filepath.Join(d, n)); !os.IsNotExist(err) {
+			t.Errorf("%s left behind", n)
+		}
+	}
+}

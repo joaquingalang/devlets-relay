@@ -193,11 +193,24 @@ func SaveState(s *State) error {
 	return write(stateFile, &c)
 }
 
-// Remove deletes the config directory (both files). Missing is not an error.
+// Remove deletes config.json and state.json, then the push files (push.log,
+// push.started, push.lock) and the directory as best it can. Missing files are
+// not an error, and neither is a push file another process holds open (a
+// running push keeps push.log open, which Windows refuses to delete): only
+// config.json and state.json decide whether the link is gone.
 func Remove() error {
 	dir, err := Dir()
 	if err != nil {
 		return err
 	}
-	return os.RemoveAll(dir)
+	for _, name := range []string{configFile, stateFile} {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove %s: %w", name, errors.Unwrap(err))
+		}
+	}
+	for _, name := range []string{"push.log", "push.started", "push.lock"} {
+		_ = os.Remove(filepath.Join(dir, name))
+	}
+	_ = os.RemoveAll(dir)
+	return nil
 }

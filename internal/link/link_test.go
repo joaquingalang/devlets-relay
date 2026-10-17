@@ -742,3 +742,20 @@ func TestEmptyAnswerIsYesOnlyFromATerminal(t *testing.T) {
 		t.Errorf("box created")
 	}
 }
+
+func TestUnlinkDespiteHeldPushLog(t *testing.T) {
+	e := setup(t)
+	linkOnce(t, e)
+	lf, err := os.OpenFile(filepath.Join(os.Getenv("DEVLETS_CONFIG_DIR"), "push.log"), os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lf.Close()
+	var out bytes.Buffer
+	if err := Unlink(context.Background(), &out, Options{}); err != nil {
+		t.Fatalf("unlink failed over a held push.log: %v\n%s", err, out.String())
+	}
+	if _, err := store.LoadConfig(); err != store.ErrNotLinked {
+		t.Errorf("config should be gone: %v", err)
+	}
+}
