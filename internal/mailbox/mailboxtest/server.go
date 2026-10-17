@@ -22,7 +22,7 @@ import (
 // RecordedRequest is one request the server saw.
 type RecordedRequest struct {
 	Method string
-	Path   string
+	Path   string // request URI: path plus query
 	Header http.Header
 	Body   []byte
 }
@@ -143,7 +143,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 8*1024+1))
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.reqs = append(s.reqs, RecordedRequest{r.Method, r.URL.Path, r.Header.Clone(), body})
+	s.reqs = append(s.reqs, RecordedRequest{r.Method, r.URL.RequestURI(), r.Header.Clone(), body})
 
 	if s.retryAfter > 0 {
 		w.Header().Set("Retry-After", strconv.Itoa(s.retryAfter))

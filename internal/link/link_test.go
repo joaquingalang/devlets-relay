@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/url"
 	"os"
@@ -27,6 +28,9 @@ type env struct {
 	claude string // settings.json
 	codex  string // config.toml
 }
+
+// phoneUA is what mailboxtest sends for the requests the test plays as the phone.
+const phoneUA = "mailboxtest-phone"
 
 const claudeBefore = `{"statusLine":{"type":"command","command":"old-line"},"theme":"dark"}`
 const codexBefore = "notify = [\"old\"]\nmodel = \"x\"\n"
@@ -164,7 +168,7 @@ func TestLinkFlow(t *testing.T) {
 		!strings.Contains(s, "Send Codex usage? This runs Devlets after each Codex reply. [Y/n]") {
 		t.Errorf("questions missing:\n%s", s)
 	}
-	if !strings.Contains(s, "or open it with your phone's camera") {
+	if !strings.Contains(s, "or open it with your phone's camera\n") || strings.Contains(s, "camera:") {
 		t.Errorf("camera line missing")
 	}
 	if !strings.HasSuffix(strings.TrimSpace(s), "✓ Linked to Pixel 8") {
@@ -377,7 +381,7 @@ func TestUnlinkKeepsConfigWhenRestoreFails(t *testing.T) {
 	if err := Unlink(context.Background(), &out, Options{API: e.srv.URL}); err == nil {
 		t.Fatal("want an error when settings cannot be restored")
 	}
-	if !strings.Contains(out.String(), "settings.json") {
+	if !strings.Contains(out.String(), e.claude) {
 		t.Errorf("message must name the file: %s", out.String())
 	}
 	cfg, err := store.LoadConfig()
@@ -459,11 +463,13 @@ func TestKeyNeverSent(t *testing.T) {
 		"key raw": key, "key b64url": []byte(crypto.B64(key)), "key b64": []byte(base64.StdEncoding.EncodeToString(key)),
 		"key hex":    []byte(hex.EncodeToString(key)),
 		"read token": []byte(readToken), "read token raw": rtRaw,
+		"read token b64": []byte(base64.StdEncoding.EncodeToString(rtRaw)),
+		"read token hex": []byte(hex.EncodeToString(rtRaw)),
 	}
 	n := 0
 	for _, r := range e.srv.Requests() {
-		if !strings.HasPrefix(r.Header.Get("User-Agent"), "devlets/") {
-			continue // the test phone's own calls
+		if r.Header.Get("User-Agent") == phoneUA {
+			continue // the test phone's own calls, marked explicitly by mailboxtest
 		}
 		n++
 		var all bytes.Buffer
@@ -482,5 +488,147 @@ func TestKeyNeverSent(t *testing.T) {
 	}
 	if n < 5 { // create, put, hello poll, put (push), delete
 		t.Errorf("only %d CLI requests recorded", n)
+	}
+}
+
+func TestLinkPrintsNoPlainKey(t *testing.T) {
+	e := setup(t)
+	e.phone("P")
+	var out bytes.Buffer
+	if err := Run(context.Background(), strings.NewReader("y\ny\n"), &out, e.opts(false)); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := store.LoadConfig()
+	key, _ := crypto.UnB64(cfg.Key)
+	for name, secret := range map[string]string{"key": crypto.B64(key), "read token": crypto.ReadToken(key), "write token": cfg.WriteToken, "box id": cfg.BoxID} {
+		if strings.Contains(out.String(), secret) {
+			t.Errorf("link output contains the %s", name)
+		}
+	}
+}
+
+func posts(e *env) int {
+	n := 0
+	for _, r := range e.srv.Requests() {
+		if r.Method == "POST" {
+			n++
+		}
+	}
+	return n
+}
+
+func TestLinkNothingToLink(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		o    func(*env) Options
+		in   string
+	}{
+		{"none detected", func(e *env) Options {
+			o := e.opts(false)
+			o.Detect = func() (bool, bool) { return false, false }
+			return o
+		}, ""},
+		{"both declined", func(e *env) Options { return e.opts(false) }, "n\nn\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setup(t)
+			codexRead := false
+			readCodex = func(ctx context.Context) (contract.Tool, error) { codexRead = true; return contract.Tool{}, nil }
+			var out bytes.Buffer
+			err := Run(context.Background(), strings.NewReader(tc.in), &out, tc.o(e))
+			if !errors.Is(err, ErrReported) {
+				t.Fatalf("err = %v", err)
+			}
+			if !strings.Contains(out.String(), "Neither Claude Code nor Codex is set up to send usage. Nothing to link.") {
+				t.Errorf("output: %s", out.String())
+			}
+			if posts(e) != 0 || codexRead {
+				t.Errorf("must not read Codex or create a box (posts=%d, read=%v)", posts(e), codexRead)
+			}
+			if _, err := store.LoadConfig(); err != store.ErrNotLinked {
+				t.Errorf("no config expected")
+			}
+		})
+	}
+}
+
+func TestLinkBothHooksFailDeletesBox(t *testing.T) {
+	e := setup(t)
+	if err := os.WriteFile(e.claude, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(e.codex); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(e.codex, 0o700); err != nil { // reading a directory as config.toml fails
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err := Run(context.Background(), strings.NewReader("y\ny\n"), &out, e.opts(false))
+	if !errors.Is(err, ErrReported) || !strings.Contains(out.String(), "Neither Claude Code nor Codex is set up to send usage. Nothing to link.") {
+		t.Fatalf("err=%v out=%s", err, out.String())
+	}
+	if posts(e) != 1 {
+		t.Fatalf("want one box created, got %d", posts(e))
+	}
+	deleted := false
+	for _, r := range e.srv.Requests() {
+		if r.Method == "DELETE" {
+			deleted = true
+		}
+	}
+	if !deleted || len(e.puts()) != 0 {
+		t.Errorf("box must be deleted and nothing pushed (deleted=%v puts=%d)", deleted, len(e.puts()))
+	}
+	if _, err := store.LoadConfig(); err != store.ErrNotLinked {
+		t.Errorf("config must be gone")
+	}
+}
+
+func TestLinkHelloTimeoutKeepsLink(t *testing.T) {
+	e := setup(t)
+	o := e.opts(false)
+	o.HelloTimeout = 150 * time.Millisecond
+	var out bytes.Buffer
+	err := Run(context.Background(), strings.NewReader("y\ny\n"), &out, o)
+	if !errors.Is(err, ErrReported) {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(out.String()), "Run devlets link again to show the code.") {
+		t.Errorf("output: %s", out.String())
+	}
+	if _, err := store.LoadConfig(); err != nil {
+		t.Errorf("link must stay: %v", err)
+	}
+}
+
+func TestLinkCtrlCSaysSameLine(t *testing.T) {
+	e := setup(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(200 * time.Millisecond); cancel() }()
+	var out bytes.Buffer
+	err := Run(ctx, strings.NewReader("y\ny\n"), &out, e.opts(false))
+	if !errors.Is(err, ErrReported) || !strings.Contains(out.String(), "Run devlets link again to show the code.") || strings.Contains(out.String(), "canceled") {
+		t.Errorf("err=%v out=%s", err, out.String())
+	}
+}
+
+func TestShowAgainOnRemovedBox(t *testing.T) {
+	e := setup(t)
+	first := linkOnce(t, e)
+	e.srv.DeleteBox(first.BoxID)
+	var out bytes.Buffer
+	err := Run(context.Background(), strings.NewReader("1\n"), &out, e.opts(false))
+	if !errors.Is(err, ErrReported) || !strings.Contains(out.String(), "This link was removed from the phone. Run devlets link and choose Start over.") {
+		t.Fatalf("err=%v out=%s", err, out.String())
+	}
+	if _, err := store.LoadConfig(); err != store.ErrNotLinked {
+		t.Errorf("files must be removed (BR12)")
+	}
+	if b, _ := os.ReadFile(e.claude); string(b) != claudeBefore {
+		t.Errorf("claude not restored: %s", b)
+	}
+	if b, _ := os.ReadFile(e.codex); string(b) != codexBefore {
+		t.Errorf("codex not restored: %s", b)
 	}
 }

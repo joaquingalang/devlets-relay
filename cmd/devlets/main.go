@@ -116,6 +116,9 @@ func runLink(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	if err := link.Run(ctx, stdin, stdout, opts); err != nil {
+		if errors.Is(err, link.ErrReported) {
+			return 1
+		}
 		fmt.Fprintf(stderr, "devlets link: %v\n", err)
 		return 1
 	}

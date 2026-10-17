@@ -38,6 +38,16 @@ type Options struct {
 // Version is the CLI version, for the User-Agent. main sets it.
 var Version = "dev"
 
+// ErrReported means the command already told the user what happened; main
+// exits 1 without printing anything more.
+var ErrReported = errors.New("already reported")
+
+const (
+	msgNothingToLink = "Neither Claude Code nor Codex is set up to send usage. Nothing to link."
+	msgShowAgain     = "Run devlets link again to show the code."
+	msgRemoved       = "This link was removed from the phone. Run devlets link and choose Start over."
+)
+
 // AfterStatus runs at the end of `devlets status`. Task 10 hooks the weekly
 // "newer version" line here.
 var AfterStatus func(out io.Writer)
@@ -171,9 +181,27 @@ func showAgain(ctx context.Context, out io.Writer, opts Options, cfg *store.Conf
 	}
 	client := &mailbox.Client{Base: apiFor(opts, cfg), Version: Version}
 	// a hello already on the server is an older phone: wait for a new one
-	baseline, _ := client.Hello(ctx, cfg.BoxID, cfg.WriteToken)
+	baseline, herr := client.Hello(ctx, cfg.BoxID, cfg.WriteToken)
+	if errors.Is(herr, mailbox.ErrGone) {
+		return removedFromPhone(out, cfg)
+	}
 	printCode(out, URL(cfg.BoxID, key))
-	return waitHello(ctx, out, client, cfg.BoxID, cfg.WriteToken, key, baseline, opts.HelloTimeout)
+	err = waitHello(ctx, out, client, cfg.BoxID, cfg.WriteToken, key, baseline, opts.HelloTimeout)
+	if errors.Is(err, mailbox.ErrGone) {
+		return removedFromPhone(out, cfg)
+	}
+	return err
+}
+
+// removedFromPhone treats a 404 like BR12: restore both tools and delete the
+// local files, so the next `devlets link` starts fresh.
+func removedFromPhone(out io.Writer, cfg *store.Config) error {
+	if err := restoreTools(out, cfg); err != nil {
+		return ErrReported
+	}
+	_ = store.Remove()
+	fmt.Fprintln(out, msgRemoved)
+	return ErrReported
 }
 
 func printCode(out io.Writer, link string) {
@@ -182,8 +210,7 @@ func printCode(out io.Writer, link string) {
 	fmt.Fprintln(out)
 	printQR(out, link)
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "or open it with your phone's camera:")
-	fmt.Fprintln(out, link)
+	fmt.Fprintln(out, "or open it with your phone's camera")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Waiting for your phone...")
 }
@@ -202,7 +229,8 @@ func fresh(ctx context.Context, r *bufio.Reader, out io.Writer, opts Options) er
 		wantCodex = yesNo(r, out, opts.Yes, "Send Codex usage? This runs Devlets after each Codex reply. [Y/n]")
 	}
 	if !wantClaude && !wantCodex {
-		fmt.Fprintln(out, "No tool chosen: linking anyway. Run devlets link again to add one.")
+		fmt.Fprintln(out, msgNothingToLink)
+		return ErrReported
 	}
 
 	// 1. read Codex first, before anything changes
@@ -274,6 +302,14 @@ func fresh(ctx context.Context, r *bufio.Reader, out io.Writer, opts Options) er
 		}
 	}
 
+	if !cfg.Claude.Hooked && !cfg.Codex.Hooked {
+		// nothing ended up hooked: undo the box and stop
+		_ = client.Delete(ctx, boxID, writeToken)
+		_ = store.Remove()
+		fmt.Fprintln(out, msgNothingToLink)
+		return ErrReported
+	}
+
 	// 4. ONE reading: hooked list and the Codex tool when read
 	now := time.Now().UTC()
 	hooked := []string{}
@@ -301,7 +337,11 @@ func fresh(ctx context.Context, r *bufio.Reader, out io.Writer, opts Options) er
 
 	// 5. the code, then wait for the phone
 	printCode(out, URL(boxID, key))
-	return waitHello(ctx, out, client, boxID, writeToken, key, nil, opts.HelloTimeout)
+	err = waitHello(ctx, out, client, boxID, writeToken, key, nil, opts.HelloTimeout)
+	if errors.Is(err, mailbox.ErrGone) {
+		return errors.New("this link was deleted. Run devlets link to start again")
+	}
+	return err
 }
 
 // waitHello polls for the phone's hello. A hello equal to baseline is an old
@@ -318,7 +358,7 @@ func waitHello(ctx context.Context, out io.Writer, client *mailbox.Client, boxID
 		env, err := client.Hello(wctx, boxID, writeToken)
 		switch {
 		case errors.Is(err, mailbox.ErrGone):
-			return errors.New("this link was deleted. Run devlets link to start again")
+			return mailbox.ErrGone
 		case err == nil && env != nil && !(baseline != nil && *env == *baseline):
 			if pt, err := crypto.Open(key, boxID, *env); err == nil {
 				var h struct {
@@ -331,10 +371,8 @@ func waitHello(ctx context.Context, out io.Writer, client *mailbox.Client, boxID
 		}
 		select {
 		case <-wctx.Done():
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return errors.New("no phone linked yet. Run devlets link and choose Show the code again")
+			fmt.Fprintln(out, msgShowAgain) // timeout or Ctrl-C: the link stays
+			return ErrReported
 		case <-tick.C:
 		}
 	}
@@ -386,7 +424,7 @@ func restoreTools(out io.Writer, cfg *store.Config) error {
 		}
 		if err := claude.Unhook(prev); err != nil {
 			failed = true
-			fmt.Fprintf(out, "Could not restore Claude Code: %v\nFix its settings.json by hand, then run devlets unlink again.\n", err)
+			fmt.Fprintf(out, "Could not restore Claude Code: %v\nFix %s by hand, then run devlets unlink again.\n", err, claudeSettingsPath())
 		} else {
 			cfg.Claude = store.Hook{}
 			_ = store.SaveConfig(cfg)
@@ -399,7 +437,7 @@ func restoreTools(out io.Writer, cfg *store.Config) error {
 		}
 		if err := codex.Unhook(prev); err != nil {
 			failed = true
-			fmt.Fprintf(out, "Could not restore Codex: %v\nFix its config.toml by hand, then run devlets unlink again.\n", err)
+			fmt.Fprintf(out, "Could not restore Codex: %v\nFix %s by hand, then run devlets unlink again.\n", err, codexConfigPath())
 		} else {
 			cfg.Codex = store.Hook{}
 			_ = store.SaveConfig(cfg)
@@ -485,4 +523,22 @@ func age(now, t time.Time) string {
 		return fmt.Sprintf("%d h ago", int(d/time.Hour))
 	}
 	return fmt.Sprintf("%d d ago", int(d/(24*time.Hour)))
+}
+
+// claudeSettingsPath mirrors where the claude package reads settings.json.
+func claudeSettingsPath() string {
+	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
+		return filepath.Join(d, "settings.json")
+	}
+	h, _ := os.UserHomeDir()
+	return filepath.Join(h, ".claude", "settings.json")
+}
+
+// codexConfigPath mirrors where the codex package reads config.toml.
+func codexConfigPath() string {
+	if d := os.Getenv("CODEX_HOME"); d != "" {
+		return filepath.Join(d, "config.toml")
+	}
+	h, _ := os.UserHomeDir()
+	return filepath.Join(h, ".codex", "config.toml")
 }
