@@ -1,0 +1,89 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "REDACTED",
+  "cwd": "REDACTED",
+  "scratchpad_dir": "REDACTED",
+  "prompt_id": "00000000-0000-0000-0000-000000000000",
+  "effort": {
+    "level": "high"
+  },
+  "session_name": "REDACTED",
+  "model": {
+    "id": "claude-opus-5-5",
+    "display_name": "Opus 5.5"
+  },
+  "workspace": {
+    "current_dir": "REDACTED",
+    "project_dir": "REDACTED",
+    "added_dirs": [
+      "C:\\tmp"
+    ],
+    "repo": {
+      "host": "github.com",
+      "owner": "joaquingalang",
+      "name": "devlets"
+    }
+  },
+  "version": "2.1.302",
+  "output_style": {
+    "name": "default"
+  },
+  "cost": {
+    "total_cost_usd": 40.73292156500002,
+    "total_duration_ms": 63805845,
+    "total_api_duration_ms": 4644825,
+    "total_lines_added": 2442,
+    "total_lines_removed": 67
+  },
+  "context_window": {
+    "total_input_tokens": 458056,
+    "total_output_tokens": 3,
+    "context_window_size": 1000000,
+    "current_usage": {
+      "input_tokens": 2,
+      "output_tokens": 3,
+      "cache_creation_input_tokens": 899,
+      "cache_read_input_tokens": 457155
+    },
+    "used_percentage": 46,
+    "remaining_percentage": 54
+  },
+  "exceeds_200k_tokens": true,
+  "prompt_cache": {
+    "warm": true,
+    "caching_observed": true,
+    "ttl": "1h",
+    "expires_at": 1792263969,
+    "requests": 163,
+    "misses": 2,
+    "expected_rebuilds": 0,
+    "hit_ratio": 0.9850100455160877,
+    "cache_write_tokens": 766550,
+    "miss_recache_tokens": 437815,
+    "last_miss_at": 1792254014,
+    "last_miss_cause": {
+      "causes": [
+        "ttl_expired_1h"
+      ]
+    },
+    "miss_causes": {
+      "messages_rewritten": 1,
+      "ttl_expired_1h": 1
+    },
+    "recache_tokens_if_cold": 457157
+  },
+  "fast_mode": false,
+  "thinking": {
+    "enabled": true
+  },
+  "rate_limits": {
+    "five_hour": {
+      "used_percentage": 4,
+      "resets_at": 1792273200
+    },
+    "seven_day": {
+      "used_percentage": 53,
+      "resets_at": 1792378800
+    }
+  }
+}

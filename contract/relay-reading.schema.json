@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getdevlets.com/schema/relay-reading.schema.json",
+  "title": "Relay reading",
+  "description": "Plaintext reading one computer sends to the phone through the relay (encrypted before it leaves the computer).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "computer", "sentAt", "hooked", "tools"],
+  "properties": {
+    "v": { "const": 1 },
+    "computer": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "sentAt": { "type": "string", "format": "date-time" },
+    "hooked": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/tool" }
+    }
+  },
+  "$defs": {
+    "tool": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["windows", "readAt"],
+      "properties": {
+        "plan": { "type": "string" },
+        "readAt": { "type": "string", "format": "date-time" },
+        "windows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/window" }
+        }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "usedPercent", "resetsAt"],
+      "properties": {
+        "id": { "type": "string" },
+        "usedPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "resetsAt": { "type": "string", "format": "date-time" },
+        "minutes": { "type": "integer", "exclusiveMinimum": 0 }
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "computer": "JOAQUIN-PC",
+  "sentAt": "2026-10-17T09:00:00Z",
+  "hooked": ["claude", "codex"],
+  "tools": {}
+}

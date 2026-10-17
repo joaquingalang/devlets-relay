@@ -1,0 +1,5 @@
+{
+  "argvAfterProgram": [
+    "{\"type\":\"agent-turn-complete\",\"thread-id\":\"00000000-0000-0000-0000-000000000000\",\"turn-id\":\"00000000-0000-0000-0000-000000000000\",\"cwd\":\"REDACTED\",\"client\":\"codex_exec\",\"input-messages\":[\"REDACTED\"],\"last-assistant-message\":\"REDACTED\"}"
+  ]
+}

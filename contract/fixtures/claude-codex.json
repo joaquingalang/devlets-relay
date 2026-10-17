@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "computer": "JOAQUIN-PC",
+  "sentAt": "2026-10-17T09:12:00Z",
+  "hooked": ["claude", "codex"],
+  "tools": {
+    "claude": {
+      "readAt": "2026-10-17T09:11:42Z",
+      "windows": [
+        { "id": "five_hour", "usedPercent": 38, "resetsAt": "2026-10-17T12:00:00Z" },
+        { "id": "seven_day", "usedPercent": 61.5, "resetsAt": "2026-10-21T00:00:00Z" }
+      ]
+    },
+    "codex": {
+      "readAt": "2026-10-17T09:11:50Z",
+      "windows": [
+        { "id": "primary", "usedPercent": 22, "minutes": 300, "resetsAt": "2026-10-17T13:30:00Z" },
+        { "id": "secondary", "usedPercent": 47, "minutes": 10080, "resetsAt": "2026-10-22T08:00:00Z" }
+      ]
+    }
+  }
+}
