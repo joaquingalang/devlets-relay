@@ -605,7 +605,8 @@ func TestLinkHelloTimeoutKeepsLink(t *testing.T) {
 func TestLinkCtrlCSaysSameLine(t *testing.T) {
 	e := setup(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { time.Sleep(200 * time.Millisecond); cancel() }()
+	waitingHook = cancel
+	defer func() { waitingHook = nil }()
 	var out bytes.Buffer
 	err := Run(ctx, strings.NewReader("y\ny\n"), &out, e.opts(false))
 	if !errors.Is(err, ErrReported) || !strings.Contains(out.String(), "Run devlets link again to show the code.") || strings.Contains(out.String(), "canceled") {
@@ -619,7 +620,7 @@ func TestShowAgainOnRemovedBox(t *testing.T) {
 	e.srv.DeleteBox(first.BoxID)
 	var out bytes.Buffer
 	err := Run(context.Background(), strings.NewReader("1\n"), &out, e.opts(false))
-	if !errors.Is(err, ErrReported) || !strings.Contains(out.String(), "This link was removed from the phone. Run devlets link and choose Start over.") {
+	if !errors.Is(err, ErrReported) || !strings.Contains(out.String(), "This link was removed from the phone. Run devlets link to set it up again.") {
 		t.Fatalf("err=%v out=%s", err, out.String())
 	}
 	if _, err := store.LoadConfig(); err != store.ErrNotLinked {
@@ -630,5 +631,27 @@ func TestShowAgainOnRemovedBox(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(e.codex); string(b) != codexBefore {
 		t.Errorf("codex not restored: %s", b)
+	}
+}
+
+func TestUnlinkKeepsConfigWhenCodexRestoreFails(t *testing.T) {
+	e := setup(t)
+	linkOnce(t, e)
+	if err := os.Remove(e.codex); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(e.codex, 0o700); err != nil { // a directory cannot be read as config.toml
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := Unlink(context.Background(), &out, Options{API: e.srv.URL}); err == nil {
+		t.Fatal("want an error when the Codex config cannot be restored")
+	}
+	if !strings.Contains(out.String(), e.codex) {
+		t.Errorf("message must name the full path %s: %s", e.codex, out.String())
+	}
+	cfg, err := store.LoadConfig()
+	if err != nil || !cfg.Codex.Hooked || cfg.Claude.Hooked {
+		t.Errorf("config must be kept with only codex still hooked: %+v %v", cfg, err)
 	}
 }

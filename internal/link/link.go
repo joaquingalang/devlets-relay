@@ -45,7 +45,7 @@ var ErrReported = errors.New("already reported")
 const (
 	msgNothingToLink = "Neither Claude Code nor Codex is set up to send usage. Nothing to link."
 	msgShowAgain     = "Run devlets link again to show the code."
-	msgRemoved       = "This link was removed from the phone. Run devlets link and choose Start over."
+	msgRemoved       = "This link was removed from the phone. Run devlets link to set it up again."
 )
 
 // AfterStatus runs at the end of `devlets status`. Task 10 hooks the weekly
@@ -61,9 +61,10 @@ const (
 
 // Seams for tests.
 var (
-	pollEvery  = 2 * time.Second
-	executable = os.Executable
-	readCodex  = func(ctx context.Context) (contract.Tool, error) {
+	pollEvery   = 2 * time.Second
+	waitingHook func() // called when polling for the hello starts
+	executable  = os.Executable
+	readCodex   = func(ctx context.Context) (contract.Tool, error) {
 		return codex.ReadRateLimits(ctx, "codex")
 	}
 )
@@ -352,6 +353,9 @@ func waitHello(ctx context.Context, out io.Writer, client *mailbox.Client, boxID
 	}
 	wctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	if waitingHook != nil {
+		waitingHook()
+	}
 	tick := time.NewTicker(pollEvery)
 	defer tick.Stop()
 	for {
