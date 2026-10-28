@@ -594,7 +594,7 @@ func TestLinkHelloTimeoutKeepsLink(t *testing.T) {
 	if !errors.Is(err, ErrReported) {
 		t.Fatalf("err = %v", err)
 	}
-	if !strings.HasSuffix(strings.TrimSpace(out.String()), "Run devlets link again to show the code.") {
+	if !strings.HasSuffix(strings.TrimSpace(out.String()), "Run devlets link again within 7 days to show the code.") {
 		t.Errorf("output: %s", out.String())
 	}
 	if _, err := store.LoadConfig(); err != nil {
@@ -609,7 +609,7 @@ func TestLinkCtrlCSaysSameLine(t *testing.T) {
 	defer func() { waitingHook = nil }()
 	var out bytes.Buffer
 	err := Run(ctx, strings.NewReader("y\ny\n"), &out, e.opts(false))
-	if !errors.Is(err, ErrReported) || !strings.Contains(out.String(), "Run devlets link again to show the code.") || strings.Contains(out.String(), "canceled") {
+	if !errors.Is(err, ErrReported) || !strings.Contains(out.String(), "Run devlets link again within 7 days to show the code.") || strings.Contains(out.String(), "canceled") {
 		t.Errorf("err=%v out=%s", err, out.String())
 	}
 }
@@ -757,5 +757,91 @@ func TestUnlinkDespiteHeldPushLog(t *testing.T) {
 	}
 	if _, err := store.LoadConfig(); err != store.ErrNotLinked {
 		t.Errorf("config should be gone: %v", err)
+	}
+}
+
+// afterFirstPut runs fn in the background once the CLI has pushed its reading.
+func (e *env) afterFirstPut(fn func(cfg *store.Config, key []byte, put mailboxtest.RecordedRequest)) {
+	n0 := len(e.puts())
+	go func() {
+		for i := 0; i < 1000; i++ {
+			if p := e.puts(); len(p) > n0 {
+				if cfg, err := store.LoadConfig(); err == nil {
+					key, _ := crypto.UnB64(cfg.Key)
+					fn(cfg, key, p[0])
+					return
+				}
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+}
+
+func TestReflectedReadingIsNotAHello(t *testing.T) {
+	e := setup(t)
+	// a malicious server answers GET .../hello with the box's own first reading
+	e.afterFirstPut(func(cfg *store.Config, key []byte, put mailboxtest.RecordedRequest) {
+		var envl crypto.Envelope
+		if json.Unmarshal(put.Body, &envl) == nil {
+			e.srv.PhoneHello(cfg.BoxID, crypto.ReadToken(key), envl)
+		}
+	})
+	o := e.opts(false)
+	o.HelloTimeout = 2 * time.Second
+	var out bytes.Buffer
+	err := Run(context.Background(), strings.NewReader("y\ny\n"), &out, o)
+	if !errors.Is(err, ErrReported) {
+		t.Fatalf("err = %v, want ErrReported\n%s", err, out.String())
+	}
+	if strings.Contains(out.String(), "✓ Linked") {
+		t.Errorf("a reflected reading confirmed the link:\n%s", out.String())
+	}
+}
+
+func TestEmptyPhoneNameIsIgnored(t *testing.T) {
+	e := setup(t)
+	e.afterFirstPut(func(cfg *store.Config, key []byte, _ mailboxtest.RecordedRequest) { e.hello(cfg, "") })
+	o := e.opts(false)
+	o.HelloTimeout = 500 * time.Millisecond
+	var out bytes.Buffer
+	err := Run(context.Background(), strings.NewReader("y\ny\n"), &out, o)
+	if !errors.Is(err, ErrReported) || strings.Contains(out.String(), "✓ Linked") {
+		t.Errorf("err=%v out=%s", err, out.String())
+	}
+}
+
+func TestTodaysHelloStillLinks(t *testing.T) {
+	e := setup(t)
+	// sealed exactly as Android 0.2.0 does it: crypto.Seal, today's AAD, {"phone":"SM-S931B"}
+	e.phone("SM-S931B")
+	var out bytes.Buffer
+	if err := Run(context.Background(), strings.NewReader("y\ny\n"), &out, e.opts(false)); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "✓ Linked to SM-S931B") {
+		t.Errorf("output: %s", out.String())
+	}
+}
+
+func TestLinkPrintsConfirmCode(t *testing.T) {
+	e := setup(t)
+	e.phone("Pixel 8")
+	var out bytes.Buffer
+	if err := Run(context.Background(), strings.NewReader("y\ny\n"), &out, e.opts(false)); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	cfg, err := store.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := crypto.UnB64(cfg.Key)
+	c := crypto.ConfirmCode(key)
+	want := "Code: " + c[:3] + " " + c[3:] + " (if your phone shows a code, it must match)"
+	s := out.String()
+	if !strings.Contains(s, want) {
+		t.Errorf("missing %q in:\n%s", want, s)
+	}
+	if !strings.Contains(s, "Don't share or stream this code: it opens your readings.") {
+		t.Errorf("share warning missing:\n%s", s)
 	}
 }

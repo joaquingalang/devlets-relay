@@ -50,7 +50,7 @@ var ErrNoTerminal = errors.New("devlets link needs a terminal to ask before chan
 
 const (
 	msgNothingToLink = "Neither Claude Code nor Codex is set up to send usage. Nothing to link."
-	msgShowAgain     = "Run devlets link again to show the code."
+	msgShowAgain     = "Run devlets link again within 7 days to show the code."
 	msgRemoved       = "This link was removed from the phone. Run devlets link to set it up again."
 	msgClaudeLeft    = "Your Claude Code status line was changed after linking, so Devlets left it as it is."
 )
@@ -200,7 +200,7 @@ func showAgain(ctx context.Context, out io.Writer, opts Options, cfg *store.Conf
 	if errors.Is(herr, mailbox.ErrGone) {
 		return removedFromPhone(out, cfg)
 	}
-	printCode(out, URL(cfg.BoxID, key))
+	printCode(out, URL(cfg.BoxID, key), crypto.ConfirmCode(key))
 	err = waitHello(ctx, out, client, cfg.BoxID, cfg.WriteToken, key, baseline, opts.HelloTimeout)
 	if errors.Is(err, mailbox.ErrGone) {
 		return removedFromPhone(out, cfg)
@@ -219,13 +219,16 @@ func removedFromPhone(out io.Writer, cfg *store.Config) error {
 	return ErrReported
 }
 
-func printCode(out io.Writer, link string) {
+func printCode(out io.Writer, link, code string) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Scan this code in the Devlets app:")
 	fmt.Fprintln(out)
 	printQR(out, link)
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "or open it with your phone's camera")
+	fmt.Fprintln(out)
+	fmt.Fprintf(out, "Code: %s %s (if your phone shows a code, it must match)\n", code[:3], code[3:])
+	fmt.Fprintln(out, "Don't share or stream this code: it opens your readings.")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Waiting for your phone...")
 }
@@ -351,7 +354,7 @@ func fresh(ctx context.Context, r *bufio.Reader, out io.Writer, opts Options) er
 	_ = store.SaveState(st)
 
 	// 5. the code, then wait for the phone
-	printCode(out, URL(boxID, key))
+	printCode(out, URL(boxID, key), crypto.ConfirmCode(key))
 	err = waitHello(ctx, out, client, boxID, writeToken, key, nil, opts.HelloTimeout)
 	if errors.Is(err, mailbox.ErrGone) {
 		return errors.New("this link was deleted. Run devlets link to start again")
@@ -382,9 +385,12 @@ func waitHello(ctx context.Context, out io.Writer, client *mailbox.Client, boxID
 				var h struct {
 					Phone string `json:"phone"`
 				}
-				_ = json.Unmarshal(pt, &h)
-				fmt.Fprintf(out, "✓ Linked to %s\n", cleanName(h.Phone))
-				return nil
+				// only a hello that names a phone counts: a reading the server
+				// reflects back opens too, but has no phone (RH1)
+				if json.Unmarshal(pt, &h) == nil && cleanName(h.Phone) != "" {
+					fmt.Fprintf(out, "✓ Linked to %s\n", cleanName(h.Phone))
+					return nil
+				}
 			}
 		}
 		select {
@@ -397,6 +403,7 @@ func waitHello(ctx context.Context, out io.Writer, client *mailbox.Client, boxID
 }
 
 // cleanName drops control characters from a name that came from another device.
+// It returns "" when nothing is left.
 func cleanName(s string) string {
 	s = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
@@ -407,9 +414,6 @@ func cleanName(s string) string {
 	s = strings.TrimSpace(s)
 	if r := []rune(s); len(r) > maxName {
 		s = string(r[:maxName])
-	}
-	if s == "" {
-		return "your phone"
 	}
 	return s
 }
