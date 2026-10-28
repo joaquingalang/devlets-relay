@@ -2,6 +2,8 @@ module github.com/joaquingalang/devlets-relay
 
 go 1.27.0
 
+toolchain go1.27.3
+
 require (
 	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/tidwall/gjson v1.20.0

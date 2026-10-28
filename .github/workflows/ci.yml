@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
@@ -18,3 +21,5 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test ./...
+      - if: runner.os == 'Linux'
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
