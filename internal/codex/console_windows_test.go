@@ -46,7 +46,7 @@ func TestPrepareChildHasNoConsoleWindow(t *testing.T) {
 func TestChainChildHasNoConsoleWindow(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "out")
 	t.Setenv("HELPER_OUT", out)
-	if err := StartDetached([]string{consoleBin(t)}); err != nil {
+	if err := StartDetached([]string{consoleBin(t)}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := waitFile(t, out); got != "0" {

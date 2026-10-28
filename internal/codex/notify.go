@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"os"
 	"os/exec"
 	"time"
 
@@ -15,17 +16,35 @@ var StartPush func(args ...string) error
 
 // StartChain launches the user's previous notify argv detached. The CLI sets
 // it to StartDetached; tests set it to a recorder. Nil means do nothing.
-var StartChain func(argv []string) error
+// env is extra environment for the child (DEVLETS_CHAINED=1, see RunNotify).
+var StartChain func(argv []string, env []string) error
+
+// chainedEnv is set in the chained process's environment. A process that has
+// it never chains again, so two notifiers that wrap each other cannot loop
+// (RH13). The Claude side uses the same name.
+const chainedEnv = "DEVLETS_CHAINED"
 
 // readGap is the least time between two Codex rate-limit reads.
 const readGap = 5 * time.Minute
 
-// StartDetached runs argv without waiting for it, with no stdio attached.
-func StartDetached(argv []string) error {
+// PreviousChainable says whether the saved previous notify may be chained to.
+// link and status use it to tell the user when it will not run.
+func PreviousChainable(previous string) bool {
+	prev := parseNotifyArgv(previous)
+	return len(prev) > 0 && chainable(prev[0])
+}
+
+// PreviousNotifyArgv is the saved previous notify as an argv (nil if none).
+func PreviousNotifyArgv(previous string) []string { return parseNotifyArgv(previous) }
+
+// StartDetached runs argv without waiting for it, with no stdio attached. env
+// is added to this process's environment.
+func StartDetached(argv []string, env []string) error {
 	if len(argv) == 0 {
 		return nil
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), env...)
 	detach(cmd)
 	if err := cmd.Start(); err != nil {
 		return err
@@ -45,10 +64,13 @@ func RunNotify(args []string, cfg *store.Config, now time.Time) error {
 	if cfg == nil {
 		return nil
 	}
-	if cfg.Codex.Previous != nil && StartChain != nil {
-		if prev := parseNotifyArgv(*cfg.Codex.Previous); len(prev) > 0 {
+	// Chain only when we were not started by a chain (RH13), and never to a
+	// batch file (S1, RH3). The Codex read below still runs in a chained call;
+	// readGap already stops repeats.
+	if cfg.Codex.Previous != nil && StartChain != nil && os.Getenv(chainedEnv) == "" {
+		if prev := parseNotifyArgv(*cfg.Codex.Previous); len(prev) > 0 && chainable(prev[0]) {
 			argv := append(append([]string(nil), prev...), args...)
-			_ = StartChain(argv)
+			_ = StartChain(argv, []string{chainedEnv + "=1"})
 		}
 	}
 	if len(args) == 0 || gjson.Get(args[len(args)-1], "type").String() != "agent-turn-complete" {

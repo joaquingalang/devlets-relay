@@ -312,6 +312,9 @@ func fresh(ctx context.Context, r *bufio.Reader, out io.Writer, opts Options) er
 			if prev != "" {
 				cfg.Codex.Previous = &prev
 			}
+			if prev != "" && !codex.PreviousChainable(prev) {
+				fmt.Fprintln(out, batchNote(prev))
+			}
 			if err := store.SaveConfig(cfg); err != nil {
 				_ = codex.Unhook(prev)
 				cfg.Codex = store.Hook{}
@@ -527,6 +530,9 @@ func Status(out io.Writer, now time.Time) error {
 	}
 	tool("Claude Code", "claude", cfg.Claude)
 	tool("Codex", "codex", cfg.Codex)
+	if cfg.Codex.Hooked && cfg.Codex.Previous != nil && !codex.PreviousChainable(*cfg.Codex.Previous) {
+		fmt.Fprintf(out, "%-12s %s\n", "", batchNote(*cfg.Codex.Previous))
+	}
 	if st.LastPush.At.IsZero() {
 		fmt.Fprintf(out, "Last push:   never\n")
 	} else {
@@ -550,6 +556,15 @@ func age(now, t time.Time) string {
 		return fmt.Sprintf("%d h ago", int(d/time.Hour))
 	}
 	return fmt.Sprintf("%d d ago", int(d/(24*time.Hour)))
+}
+
+// batchNote says why the user's previous Codex notify will not run (RH3).
+func batchNote(previous string) string {
+	name := "its command"
+	if argv := codex.PreviousNotifyArgv(previous); len(argv) > 0 {
+		name = filepath.Base(argv[0])
+	}
+	return fmt.Sprintf("Your previous Codex notify is a batch file (%s). Devlets won't pass Codex's messages to it, because Windows can't do that safely, so it won't run while Devlets is linked.", name)
 }
 
 // claudeSettingsPath mirrors where the claude package reads settings.json.

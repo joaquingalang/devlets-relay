@@ -246,13 +246,13 @@ func TestUnhookLeavesUserEdit(t *testing.T) {
 func TestNotifyChainsPrevious(t *testing.T) {
 	t.Setenv("DEVLETS_CONFIG_DIR", t.TempDir())
 	payload := `{"type":"agent-turn-complete","last-assistant-message":"hi"}`
-	prev := "notify = [" + tomlQuote("/opt/helper") + ", \"turn-ended\"]\n"
+	prev := "notify = [" + tomlQuote(helperBin) + ", \"turn-ended\"]\n"
 	cfg := &store.Config{Codex: store.Hook{Hooked: true, Previous: &prev}}
 
 	var chained [][]string
 	var pushes [][]string
 	oldC, oldP := StartChain, StartPush
-	StartChain = func(argv []string) error { chained = append(chained, argv); return nil }
+	StartChain = func(argv, env []string) error { chained = append(chained, argv); return nil }
 	StartPush = func(args ...string) error { pushes = append(pushes, args); return nil }
 	defer func() { StartChain, StartPush = oldC, oldP }()
 
@@ -260,7 +260,7 @@ func TestNotifyChainsPrevious(t *testing.T) {
 	if err := RunNotify([]string{payload}, cfg, now); err != nil {
 		t.Fatal(err)
 	}
-	if len(chained) != 1 || len(chained[0]) != 3 || chained[0][0] != "/opt/helper" || chained[0][1] != "turn-ended" || chained[0][2] != payload {
+	if len(chained) != 1 || len(chained[0]) != 3 || chained[0][0] != helperBin || chained[0][1] != "turn-ended" || chained[0][2] != payload {
 		t.Fatalf("chained %q", chained)
 	}
 	if len(pushes) != 1 || strings.Join(pushes[0], " ") != "push --read-codex" {
@@ -291,7 +291,7 @@ func TestNotifyChainsPrevious(t *testing.T) {
 func TestChainRealProcess(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "args.txt")
 	t.Setenv("HELPER_OUT", out)
-	if err := StartDetached([]string{helperBin, "turn-ended", `{"type":"x"}`}); err != nil {
+	if err := StartDetached([]string{helperBin, "turn-ended", `{"type":"x"}`}, nil); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(10 * time.Second)
@@ -444,5 +444,72 @@ func TestHookUnhookThroughSymlinkKeepsMode(t *testing.T) {
 	}
 	if fi, _ := os.Stat(real); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v", fi.Mode().Perm())
+	}
+}
+
+func TestPreviousChainable(t *testing.T) {
+	dir := t.TempDir()
+	cmdFile := filepath.Join(dir, "notify.cmd")
+	exeFile := filepath.Join(dir, "notify.exe")
+	for _, f := range []string{cmdFile, exeFile} {
+		if err := os.WriteFile(f, []byte("@echo off\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	isWin := runtime.GOOS == "windows"
+	cases := []struct {
+		name string
+		prev string
+		want bool
+	}{
+		{"cmd", "notify = [" + tomlQuote(cmdFile) + "]\n", !isWin},
+		{"exe", "notify = [" + tomlQuote(exeFile) + "]\n", true},
+		{"missing", "notify = [" + tomlQuote(filepath.Join(dir, "nope-missing")) + "]\n", !isWin},
+	}
+	for _, c := range cases {
+		if got := PreviousChainable(c.prev); got != c.want {
+			t.Errorf("%s: PreviousChainable = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// RH13: Codex's computer-use wrapper calls devlets, which chains back to the wrapper.
+func TestNotifyChainCannotLoop(t *testing.T) {
+	t.Setenv("DEVLETS_CONFIG_DIR", t.TempDir())
+	t.Setenv("DEVLETS_CHAINED", "")
+	payload := `{"type":"other"}`
+	prev := "notify = [" + tomlQuote(helperBin) + "]\n"
+	cfg := &store.Config{Codex: store.Hook{Hooked: true, Previous: &prev}}
+
+	var calls [][]string
+	var envs [][]string
+	oldC, oldP := StartChain, StartPush
+	StartChain = func(argv, env []string) error { calls = append(calls, argv); envs = append(envs, env); return nil }
+	StartPush = func(args ...string) error { return nil }
+	defer func() { StartChain, StartPush = oldC, oldP }()
+
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	if err := RunNotify([]string{payload}, cfg, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || strings.Join(calls[0], "|") != helperBin+"|"+payload {
+		t.Fatalf("chained %q", calls)
+	}
+	found := false
+	for _, e := range envs[0] {
+		if e == "DEVLETS_CHAINED=1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("env lacks DEVLETS_CHAINED=1: %q", envs[0])
+	}
+
+	t.Setenv("DEVLETS_CHAINED", "1")
+	if err := RunNotify([]string{payload}, cfg, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("a chained process chained again: %q", calls)
 	}
 }
