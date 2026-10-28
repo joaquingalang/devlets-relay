@@ -447,29 +447,39 @@ func TestHookUnhookThroughSymlinkKeepsMode(t *testing.T) {
 	}
 }
 
-func TestPreviousChainable(t *testing.T) {
-	dir := t.TempDir()
-	cmdFile := filepath.Join(dir, "notify.cmd")
-	exeFile := filepath.Join(dir, "notify.exe")
-	for _, f := range []string{cmdFile, exeFile} {
-		if err := os.WriteFile(f, []byte("@echo off\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+func TestPreviousNoteChainableIsEmpty(t *testing.T) {
+	prev := "notify = [" + tomlQuote(helperBin) + "]\n"
+	if n := PreviousNote(prev); n != "" {
+		t.Errorf("note = %q, want none", n)
 	}
-	isWin := runtime.GOOS == "windows"
-	cases := []struct {
-		name string
-		prev string
-		want bool
-	}{
-		{"cmd", "notify = [" + tomlQuote(cmdFile) + "]\n", !isWin},
-		{"exe", "notify = [" + tomlQuote(exeFile) + "]\n", true},
-		{"missing", "notify = [" + tomlQuote(filepath.Join(dir, "nope-missing")) + "]\n", !isWin},
+	if n := PreviousNote("notify = nope"); n != "" {
+		t.Errorf("note for garbage = %q", n)
 	}
-	for _, c := range cases {
-		if got := PreviousChainable(c.prev); got != c.want {
-			t.Errorf("%s: PreviousChainable = %v, want %v", c.name, got, c.want)
-		}
+}
+
+// A second loop guard (RH13): the saved previous notify is devlets itself.
+func TestNotifyDoesNotChainToItself(t *testing.T) {
+	t.Setenv("DEVLETS_CONFIG_DIR", t.TempDir())
+	t.Setenv("DEVLETS_CHAINED", "")
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := "notify = [" + tomlQuote(self) + ", \"codex-notify\"]\n"
+	cfg := &store.Config{Codex: store.Hook{Hooked: true, Previous: &prev}}
+	called := 0
+	oldC, oldP := StartChain, StartPush
+	StartChain = func(argv, env []string) error { called++; return nil }
+	StartPush = func(args ...string) error { return nil }
+	defer func() { StartChain, StartPush = oldC, oldP }()
+	if err := RunNotify([]string{`{"type":"other"}`}, cfg, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if called != 0 {
+		t.Fatal("chained to itself")
+	}
+	if n := PreviousNote(prev); !strings.Contains(n, "Devlets itself") {
+		t.Errorf("note = %q", n)
 	}
 }
 

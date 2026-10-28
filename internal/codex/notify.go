@@ -1,8 +1,10 @@
 package codex
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/tidwall/gjson"
@@ -27,15 +29,69 @@ const chainedEnv = "DEVLETS_CHAINED"
 // readGap is the least time between two Codex rate-limit reads.
 const readGap = 5 * time.Minute
 
-// PreviousChainable says whether the saved previous notify may be chained to.
-// link and status use it to tell the user when it will not run.
-func PreviousChainable(previous string) bool {
-	prev := parseNotifyArgv(previous)
-	return len(prev) > 0 && chainable(prev[0])
+// Refusal is why the saved previous notify is not chained to; ChainOK means it is.
+type Refusal string
+
+const (
+	ChainOK       Refusal = ""
+	RefuseBatch   Refusal = "batch file"
+	RefuseShell   Refusal = "command shell"
+	RefuseMissing Refusal = "not found"
+	RefuseSelf    Refusal = "devlets"
+)
+
+// isSelf reports whether argv0 resolves to this very executable: a second
+// loop guard for a wrapper that clears the environment (RH13).
+func isSelf(argv0 string) bool {
+	p, err := exec.LookPath(argv0)
+	if err != nil {
+		return false
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	a, err1 := os.Stat(p)
+	b, err2 := os.Stat(exe)
+	return err1 == nil && err2 == nil && os.SameFile(a, b)
 }
 
-// PreviousNotifyArgv is the saved previous notify as an argv (nil if none).
-func PreviousNotifyArgv(previous string) []string { return parseNotifyArgv(previous) }
+// checkArgv0 combines the platform check with the self check.
+func checkArgv0(argv0 string) (Refusal, string) {
+	if r, name := chainCheck(argv0); r != ChainOK {
+		return r, name
+	}
+	if isSelf(argv0) {
+		return RefuseSelf, filepath.Base(argv0)
+	}
+	return ChainOK, filepath.Base(argv0)
+}
+
+func chainOK(argv0 string) bool {
+	r, _ := checkArgv0(argv0)
+	return r == ChainOK
+}
+
+// PreviousNote tells the user, in one sentence, why the saved previous notify
+// will not run, or returns "" when it will. link and status print it.
+func PreviousNote(previous string) string {
+	prev := parseNotifyArgv(previous)
+	if len(prev) == 0 {
+		return ""
+	}
+	r, name := checkArgv0(prev[0])
+	switch r {
+	case RefuseBatch:
+		return fmt.Sprintf("Your previous Codex notify is a batch file (%s). Devlets won't pass Codex's messages to it, because Windows can't do that safely, so it won't run while Devlets is linked.", name)
+	case RefuseShell:
+		return fmt.Sprintf("Your previous Codex notify runs through %s, which would treat Codex's messages as commands. Devlets won't pass them on, so it won't run while Devlets is linked.", name)
+	case RefuseMissing:
+		return fmt.Sprintf("Your previous Codex notify (%s) wasn't found, so Devlets won't run it.", name)
+	case RefuseSelf:
+		return "Your previous Codex notify is Devlets itself, so Devlets won't run it."
+	}
+	return ""
+}
 
 // StartDetached runs argv without waiting for it, with no stdio attached. env
 // is added to this process's environment.
@@ -68,7 +124,7 @@ func RunNotify(args []string, cfg *store.Config, now time.Time) error {
 	// batch file (S1, RH3). The Codex read below still runs in a chained call;
 	// readGap already stops repeats.
 	if cfg.Codex.Previous != nil && StartChain != nil && os.Getenv(chainedEnv) == "" {
-		if prev := parseNotifyArgv(*cfg.Codex.Previous); len(prev) > 0 && chainable(prev[0]) {
+		if prev := parseNotifyArgv(*cfg.Codex.Previous); len(prev) > 0 && chainOK(prev[0]) {
 			argv := append(append([]string(nil), prev...), args...)
 			_ = StartChain(argv, []string{chainedEnv + "=1"})
 		}

@@ -53,9 +53,9 @@ More: https://getdevlets.com/relay
 
 `devlets link` prints a QR code, a link and a 6-digit confirm code such as `123 456`. Scan the QR code in the Devlets app. If the phone shows a code, it must match the one in your terminal. Don't share or stream the QR code or the code: they open your readings.
 
-## Codex and batch files
+## Codex and command shells
 
-Devlets runs after each Codex reply and passes the reply's message on to the notifier you had before. On Windows it won't do that for a `.bat` or `.cmd` file, because Windows can't pass a message to a batch file safely. `devlets link` and `devlets status` tell you when your previous notifier is one, and it won't run while Devlets is linked. A notifier started through `npx` is one (`npx.cmd`).
+Devlets runs after each Codex reply and passes the reply's message on to the notifier you had before. On Windows it won't do that when the notifier is a `.bat` or `.cmd` file, or runs through `cmd.exe`, `powershell.exe` or `pwsh.exe`, because those programs would read parts of the message as commands. `devlets link` and `devlets status` tell you when your previous notifier is one of these, or can't be found. It won't run while Devlets is linked. A notifier started through `npx` is one (`npx.cmd`).
 
 ## Verify a download
 

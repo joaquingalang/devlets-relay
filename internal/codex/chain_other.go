@@ -2,5 +2,5 @@
 
 package codex
 
-// chainable is always true here: arguments reach the program as they are.
-func chainable(string) bool { return true }
+// chainCheck always allows the chain here: arguments reach the program as they are.
+func chainCheck(argv0 string) (Refusal, string) { return ChainOK, argv0 }
