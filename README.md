@@ -49,13 +49,29 @@ irm https://getdevlets.com/link.ps1 | iex
 
 More: https://getdevlets.com/relay
 
+## Pairing
+
+`devlets link` prints a QR code, a link and a 6-digit confirm code such as `123 456`. Scan the QR code in the Devlets app. If the phone shows a code, it must match the one in your terminal. Don't share or stream the QR code or the code: they open your readings.
+
+## Codex and batch files
+
+Devlets runs after each Codex reply and passes the reply's message on to the notifier you had before. On Windows it won't do that for a `.bat` or `.cmd` file, because Windows can't pass a message to a batch file safely. `devlets link` and `devlets status` tell you when your previous notifier is one, and it won't run while Devlets is linked. A notifier started through `npx` is one (`npx.cmd`).
+
+## Verify a download
+
+Releases carry build provenance. To check an archive you downloaded:
+
+```sh
+gh attestation verify <archive> --repo joaquingalang/devlets-relay
+```
+
 ## Commands
 
 - `devlets link` links this computer to your phone
 - `devlets status` shows what is linked and the last reading
 - `devlets unlink` removes the link and the hooks
 - `devlets push` reads usage and sends it now
-- `devlets update` installs the latest version (`status` mentions a newer one at most once a week)
+- `devlets update` installs the latest version (`status` mentions a newer one at most once a week). It installs only versions getdevlets.com confirms: the release must match the version and hashes that site publishes, so right after a release it may say the new version isn't confirmed yet
 - `devlets --version` prints the version
 
 ## Licence
