@@ -226,9 +226,9 @@ func printCode(out io.Writer, link, code string) {
 	printQR(out, link)
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "or open it with your phone's camera")
+	fmt.Fprintln(out, "Don't share or stream the QR code or link: they open your readings.")
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "Code: %s %s (if your phone shows a code, it must match)\n", code[:3], code[3:])
-	fmt.Fprintln(out, "Don't share or stream this code: it opens your readings.")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Waiting for your phone...")
 }

@@ -841,7 +841,9 @@ func TestLinkPrintsConfirmCode(t *testing.T) {
 	if !strings.Contains(s, want) {
 		t.Errorf("missing %q in:\n%s", want, s)
 	}
-	if !strings.Contains(s, "Don't share or stream this code: it opens your readings.") {
-		t.Errorf("share warning missing:\n%s", s)
+	// The warning is about the QR code (it holds the key), so it sits with the QR, above the confirm code.
+	warning := "Don't share or stream the QR code or link: they open your readings."
+	if !strings.Contains(s, warning) || strings.Index(s, warning) > strings.Index(s, want) {
+		t.Errorf("share warning missing or below the confirm code:\n%s", s)
 	}
 }

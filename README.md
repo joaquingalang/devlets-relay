@@ -51,7 +51,7 @@ More: https://getdevlets.com/relay
 
 ## Pairing
 
-`devlets link` prints a QR code, a link and a 6-digit confirm code such as `123 456`. Scan the QR code in the Devlets app. If the phone shows a code, it must match the one in your terminal. Don't share or stream the QR code or the code: they open your readings.
+`devlets link` prints a QR code, a link and a 6-digit confirm code such as `123 456`. Scan the QR code in the Devlets app. If the phone shows a code, it must match the one in your terminal. Don't share or stream the QR code or link: they open your readings. The 6-digit code is only for comparing and isn't secret.
 
 ## Codex and command shells
 
