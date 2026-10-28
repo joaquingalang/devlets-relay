@@ -1,6 +1,8 @@
 // Package update checks GitHub Releases for a newer devlets and replaces the
-// running binary (BR13, BR15). Downloads are verified against checksums.txt
-// before the installed binary is touched.
+// running binary (BR13, BR15). getdevlets.com is the trust root (RH4): a
+// release installs only when the site's manifest names the same version, and
+// the archive's SHA-256 must match both the manifest and checksums.txt before
+// the installed binary is touched.
 package update
 
 import (
@@ -35,6 +37,9 @@ var (
 	BaseURL = "https://api.github.com"
 	// Current is the running version (main.version); "dev" never updates.
 	Current = "dev"
+	// ManifestURL is the release manifest getdevlets.com serves:
+	// {"version":"0.2.0","sha256":{"<archive name>":"<hex>"}}.
+	ManifestURL = "https://getdevlets.com/relay/release.json"
 	// ExePath returns the binary to replace.
 	ExePath = os.Executable
 )
@@ -44,6 +49,12 @@ const (
 	noticeEvery   = 7 * 24 * time.Hour
 	noticeTimeout = 2 * time.Second
 )
+
+// manifest is what getdevlets.com pins for the latest release.
+type manifest struct {
+	Version string            `json:"version"`
+	SHA256  map[string]string `json:"sha256"`
+}
 
 type release struct {
 	Tag    string `json:"tag_name"`
@@ -72,8 +83,8 @@ func binaryName() string {
 	return "devlets"
 }
 
-// checkHost allows https URLs on github.com or *.githubusercontent.com, and
-// any URL on the host of BaseURL (the API, or httptest in tests).
+// checkHost allows https URLs on github.com, *.githubusercontent.com or
+// getdevlets.com, and any URL on the host of BaseURL (the API, or httptest in tests).
 func checkHost(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -83,7 +94,7 @@ func checkHost(raw string) error {
 		return nil
 	}
 	h := strings.ToLower(u.Hostname())
-	if u.Scheme == "https" && (h == "github.com" || strings.HasSuffix(h, ".githubusercontent.com")) {
+	if u.Scheme == "https" && (h == "github.com" || h == "getdevlets.com" || strings.HasSuffix(h, ".githubusercontent.com")) {
 		return nil
 	}
 	return fmt.Errorf("refusing to download from %s", u.Host)
@@ -197,8 +208,9 @@ func parse(v string) (semver, bool) {
 	return s, true
 }
 
-// Apply installs the latest release over the running binary if it is newer.
-// The archive's SHA-256 must match checksums.txt before anything is replaced.
+// Apply installs the latest release over the running binary if it is newer
+// and getdevlets.com confirms it. The archive's SHA-256 must match both the
+// site's manifest and checksums.txt before anything is replaced.
 func Apply(ctx context.Context) error {
 	r, err := latestRelease(ctx)
 	if err != nil {
@@ -210,6 +222,17 @@ func Apply(ctx context.Context) error {
 	}
 	if !Newer(Current, version) {
 		return nil
+	}
+	mdata, err := get(ctx, ManifestURL, 64<<10)
+	if err != nil {
+		return fmt.Errorf("could not read the release manifest from getdevlets.com: %w", err)
+	}
+	var man manifest
+	if err := json.Unmarshal(mdata, &man); err != nil {
+		return errors.New("the release manifest from getdevlets.com is not valid")
+	}
+	if man.Version != version {
+		return fmt.Errorf("version %s is not confirmed by getdevlets.com yet; try again later", version)
 	}
 	name := AssetName(version, runtime.GOOS, runtime.GOARCH)
 	var archiveURL, sumsURL string
@@ -234,6 +257,10 @@ func Apply(ctx context.Context) error {
 	}
 	if err := verify(sums, name, archive); err != nil {
 		return err
+	}
+	got := sha256.Sum256(archive)
+	if want := strings.ToLower(man.SHA256[name]); want == "" || hex.EncodeToString(got[:]) != want {
+		return fmt.Errorf("%s does not match the hash getdevlets.com pins; nothing was changed", name)
 	}
 	bin, err := extract(name, archive, binaryName())
 	if err != nil {

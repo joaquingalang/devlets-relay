@@ -48,10 +48,25 @@ func archiveFor(t *testing.T, content string) []byte {
 	return buf.Bytes()
 }
 
+// manifestFor is the getdevlets.com manifest for a release: version plus the
+// archive's SHA-256.
+func manifestFor(version string, archive []byte) string {
+	name := AssetName(version, runtime.GOOS, runtime.GOARCH)
+	sum := sha256.Sum256(archive)
+	return fmt.Sprintf(`{"version":%q,"sha256":{%q:%q}}`, version, name, hex.EncodeToString(sum[:]))
+}
+
 // fakeRelease serves a release with the given tag. checksumOf is the archive
 // bytes the checksum line is computed from (differs from archive to simulate
-// tampering).
+// tampering). The site manifest matches the archive.
 func fakeRelease(t *testing.T, tag string, archive, checksumOf []byte) *httptest.Server {
+	t.Helper()
+	version := strings.TrimPrefix(tag, "v")
+	return fakeReleaseManifest(t, tag, archive, checksumOf, http.StatusOK, manifestFor(version, archive))
+}
+
+// fakeReleaseManifest is fakeRelease with a chosen answer for the manifest.
+func fakeReleaseManifest(t *testing.T, tag string, archive, checksumOf []byte, manifestStatus int, manifest string) *httptest.Server {
 	t.Helper()
 	name := AssetName(strings.TrimPrefix(tag, "v"), runtime.GOOS, runtime.GOARCH)
 	sum := sha256.Sum256(checksumOf)
@@ -62,6 +77,10 @@ func fakeRelease(t *testing.T, tag string, archive, checksumOf []byte) *httptest
 	mux.HandleFunc("/repos/joaquingalang/devlets-relay/releases/latest", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"tag_name":%q,"assets":[{"name":%q,"browser_download_url":%q},{"name":"checksums.txt","browser_download_url":%q}]}`,
 			tag, name, srv.URL+"/dl/"+name, srv.URL+"/dl/checksums.txt")
+	})
+	mux.HandleFunc("/relay/release.json", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(manifestStatus)
+		w.Write([]byte(manifest))
 	})
 	mux.HandleFunc("/dl/checksums.txt", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(checks)) })
 	mux.HandleFunc("/dl/"+name, func(w http.ResponseWriter, r *http.Request) { w.Write(archive) })
@@ -76,9 +95,9 @@ func setup(t *testing.T, srv *httptest.Server, current string) string {
 	if err := os.WriteFile(exe, []byte("OLD"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	oldBase, oldCur, oldExe := BaseURL, Current, ExePath
-	BaseURL, Current, ExePath = srv.URL, current, func() (string, error) { return exe, nil }
-	t.Cleanup(func() { BaseURL, Current, ExePath = oldBase, oldCur, oldExe })
+	oldBase, oldCur, oldExe, oldMan := BaseURL, Current, ExePath, ManifestURL
+	BaseURL, Current, ExePath, ManifestURL = srv.URL, current, func() (string, error) { return exe, nil }, srv.URL+"/relay/release.json"
+	t.Cleanup(func() { BaseURL, Current, ExePath, ManifestURL = oldBase, oldCur, oldExe, oldMan })
 	return exe
 }
 
@@ -212,6 +231,10 @@ func TestUpdateRefusesForeignAssetHost(t *testing.T) {
 	defer evilSrv.Close()
 	name := AssetName("2.0.0", runtime.GOOS, runtime.GOARCH)
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/relay/release.json" {
+			fmt.Fprint(w, manifestFor("2.0.0", nil))
+			return
+		}
 		fmt.Fprintf(w, `{"tag_name":"v2.0.0","assets":[{"name":%q,"browser_download_url":%q},{"name":"checksums.txt","browser_download_url":%q}]}`,
 			name, evilSrv.URL+"/a", evilSrv.URL+"/c")
 	}))
@@ -250,5 +273,60 @@ func TestNoticeKeepsConcurrentPushState(t *testing.T) {
 	}
 	if st.UpdateCheckedAt.IsZero() {
 		t.Errorf("check time not saved")
+	}
+}
+
+func assertUntouched(t *testing.T, exe string) {
+	t.Helper()
+	got, _ := os.ReadFile(exe)
+	entries, _ := os.ReadDir(filepath.Dir(exe))
+	if string(got) != "OLD" || len(entries) != 1 {
+		t.Errorf("binary = %q, files = %v; want an untouched binary", got, entries)
+	}
+}
+
+func TestApplyWaitsForSiteManifest(t *testing.T) {
+	a := archiveFor(t, "NEW")
+	srv := fakeReleaseManifest(t, "v9.9.9", a, a, http.StatusOK, manifestFor("0.1.0", a))
+	exe := setup(t, srv, "0.1.0")
+	err := Apply(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "not confirmed by getdevlets.com yet") {
+		t.Fatalf("want a not-confirmed error, got %v", err)
+	}
+	assertUntouched(t, exe)
+}
+
+// The release was tampered with and checksums.txt was rewritten with it; only
+// the site's manifest still has the real hash.
+func TestApplyRefusesManifestMismatch(t *testing.T) {
+	a := archiveFor(t, "NEW")
+	real := archiveFor(t, "REAL")
+	srv := fakeReleaseManifest(t, "v1.2.0", a, a, http.StatusOK, manifestFor("1.2.0", real))
+	exe := setup(t, srv, "1.1.0")
+	err := Apply(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "getdevlets.com") {
+		t.Fatalf("want a manifest mismatch error, got %v", err)
+	}
+	assertUntouched(t, exe)
+}
+
+func TestApplyNeedsManifest(t *testing.T) {
+	a := archiveFor(t, "NEW")
+	srv := fakeReleaseManifest(t, "v1.2.0", a, a, http.StatusNotFound, "not found")
+	exe := setup(t, srv, "1.1.0")
+	if err := Apply(context.Background()); err == nil {
+		t.Fatal("Apply installed without a manifest")
+	}
+	assertUntouched(t, exe)
+}
+
+func TestCheckHostAllowsSite(t *testing.T) {
+	if err := checkHost("https://getdevlets.com/relay/release.json"); err != nil {
+		t.Errorf("site refused: %v", err)
+	}
+	for _, u := range []string{"http://getdevlets.com/relay/release.json", "https://evil.getdevlets.com.example/x", "https://getdevlets.com.evil.test/x"} {
+		if err := checkHost(u); err == nil {
+			t.Errorf("%s allowed", u)
+		}
 	}
 }
