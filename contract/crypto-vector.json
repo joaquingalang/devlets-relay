@@ -6,5 +6,6 @@
   "plaintext": "{\"v\":1,\"computer\":\"JOAQUIN-PC\",\"sentAt\":\"2026-10-17T09:12:00Z\",\"hooked\":[\"claude\",\"codex\"],\"tools\":{\"claude\":{\"readAt\":\"2026-10-17T09:11:42Z\",\"windows\":[{\"id\":\"five_hour\",\"usedPercent\":38,\"resetsAt\":\"2026-10-17T12:00:00Z\"},{\"id\":\"seven_day\",\"usedPercent\":61.5,\"resetsAt\":\"2026-10-21T00:00:00Z\"}]},\"codex\":{\"readAt\":\"2026-10-17T09:11:50Z\",\"windows\":[{\"id\":\"primary\",\"usedPercent\":22,\"minutes\":300,\"resetsAt\":\"2026-10-17T13:30:00Z\"},{\"id\":\"secondary\",\"usedPercent\":47,\"minutes\":10080,\"resetsAt\":\"2026-10-22T08:00:00Z\"}]}}}",
   "ciphertext": "nToKD3_6Lp0BCuqjcg6lrFKWe1rd9hM51UAL1jyJWSOhEymL7lZxB32uNPo_V7LJaipxHFLpIE9zZDtu_lKpktzT6gRVwcbar8CcdO67qN_vJ4nHqqX8AswoErjF9SL4_KYR0CHN4_rrv2Nyv_PPWkExBe-qF6EeHf_skplkwmD0JuRP6nixJg1tzNEwZrOh4bfJBMmj2Lamtp-cy-UOCaBxadTpAi9j8CgHABqh04UnQ4_7ZwjaHLixThV-8HokUUI_iBTzgc_BbXL5ZBUCmGPesNkNWeiI1_Fov3-79hxKOFYDg0-qWrbZLAAmajldJ5-3TOw2IOIZzsgEERESpCYR_KvNvseTA9ckxBMZVvEKIThmlovzB8pWQurSirQdoXh2-AJ_ILDJTy1Dl8r-fOJs_CduB6fiBoJXj6e9hzX47yP9z0JhJ6riWjitMeT9We-kZv8gU58vbLbwM0HmJCUxmHKmQ0E1m7N6vl-BZr2oiF40915nrtAmdyLvy_GEQ6XUTpAxtDlLaJRECd_NuHqTb9mlGb9ZGN6U_kFQQg62dhR5fY3BuhlJE6TtIqQRL9Kqo02fpBWAKOvfnQBdh3iMw5-ZvsWBrvW7Ip0SOO_-88suWnr1A0nuxhv2bYjJZtSrJv52d_T-fQtkglBLCzfqm4lBtO85tncs2sjvKzxxbfexbSliYHOuuMEQe2f5HtTgTQbd6Q8",
   "readToken": "cvkIZIoIZzZYNtrzD-MaVgcdNYrFxghBeSwUBE-cB5o",
-  "readTokenHash": "9d_JU8YI1EnIYHKCj5QuWQjrk28vndJllXQIXFqyiKs"
+  "readTokenHash": "9d_JU8YI1EnIYHKCj5QuWQjrk28vndJllXQIXFqyiKs",
+  "code": "727850"
 }

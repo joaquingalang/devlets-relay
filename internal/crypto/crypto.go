@@ -9,7 +9,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"strconv"
 )
 
@@ -17,6 +19,7 @@ const (
 	keyLen   = 32
 	nonceLen = 12
 	readInfo = "devlets-relay-read-v1"
+	codeInfo = "devlets-relay-code-v1"
 	Version  = 1
 )
 
@@ -49,6 +52,15 @@ func ReadToken(key []byte) string {
 		return "" // unreachable for a 32-byte length
 	}
 	return B64(out)
+}
+
+// ConfirmCode derives the 6-digit code both ends show while pairing (RH2).
+func ConfirmCode(key []byte) string {
+	out, err := hkdf.Key(sha256.New, key, nil, codeInfo, 4)
+	if err != nil {
+		return "" // unreachable for a 4-byte length
+	}
+	return fmt.Sprintf("%06d", binary.BigEndian.Uint32(out)%1_000_000)
 }
 
 // TokenHash is base64url(SHA-256(token string)).

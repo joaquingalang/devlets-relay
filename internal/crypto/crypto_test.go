@@ -3,11 +3,13 @@ package crypto
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
 type vec struct {
 	Key, BoxID, Nonce, Plaintext, Ciphertext, ReadToken, ReadTokenHash string
+	Code                                                               string
 	V                                                                  int
 }
 
@@ -24,6 +26,7 @@ func loadVec(t *testing.T) (vec, []byte, []byte) {
 	s := func(k string) string { return m[k].(string) }
 	v := vec{Key: s("key"), BoxID: s("boxId"), Nonce: s("nonce"), Plaintext: s("plaintext"),
 		Ciphertext: s("ciphertext"), ReadToken: s("readToken"), ReadTokenHash: s("readTokenHash"), V: int(m["v"].(float64))}
+	v.Code, _ = m["code"].(string)
 	key, err := UnB64(v.Key)
 	if err != nil {
 		t.Fatal(err)
@@ -102,5 +105,21 @@ func TestSealRoundTripAndNewKey(t *testing.T) {
 	pt, err := Open(key, "b_x", a)
 	if err != nil || string(pt) != "hi" {
 		t.Fatal("round trip")
+	}
+}
+
+func TestCodeVector(t *testing.T) {
+	v, key, _ := loadVec(t)
+	if got := ConfirmCode(key); got != v.Code {
+		t.Fatalf("code = %s, want %s", got, v.Code)
+	}
+}
+
+func TestConfirmCodeShape(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		k, _ := NewKey()
+		if c := ConfirmCode(k); len(c) != 6 || strings.Trim(c, "0123456789") != "" {
+			t.Fatalf("bad code %q", c)
+		}
 	}
 }
